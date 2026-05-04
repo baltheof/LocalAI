@@ -96,24 +96,24 @@ def listen():
         return None
 
 def ask_gemini(question, file_context=None):
-    """Στέλνει την ερώτηση στο Gemini χρησιμοποιώντας τη ΜΝΗΜΗ της συνεδρίας"""
+    """Στέλνει την ερώτηση και επιβάλλει χρήση ΜΟΝΟ των πηγών που δώσαμε"""
     print("🧠 Σκέφτομαι...")
     
     if file_context:
-        # Αν μόλις του δώσαμε ένα αρχείο, του λέμε να το βάλει στη μνήμη του
         full_prompt = (
-            f"Σου δίνω το περιεχόμενο ενός αρχείου. Απομνημόνευσέ το για την υπόλοιπη συζήτηση:\n\n{file_context}\n\n"
-            f"Με βάση αυτό, απάντησε στην εξής ερώτηση σύντομα, στα Ελληνικά και χωρίς αστερίσκους: {question}"
+            f"ΑΠΟΚΛΕΙΣΤΙΚΗ ΠΗΓΗ ΠΛΗΡΟΦΟΡΙΩΝ:\n{file_context}\n\n"
+            f"ΟΔΗΓΙΑ: Απάντησε στην ερώτηση χρησιμοποιώντας ΑΠΟΚΛΕΙΣΤΙΚΑ ΚΑΙ ΜΟΝΟ το παραπάνω κείμενο. "
+            f"Αν η πληροφορία δεν υπάρχει εκεί, πες 'Δεν αναφέρεται στο αρχείο'.\n"
+            f"Ερώτηση: {question}"
         )
     else:
-        # Αλλιώς, συνεχίζει κανονικά τη συζήτηση
-        full_prompt = f"Απάντησε σύντομα, στα Ελληνικά και χωρίς αστερίσκους: {question}"
+        full_prompt = f"Απάντησε σύντομα στα Ελληνικά: {question}"
 
     try:
         response = chat_session.send_message(full_prompt)
         return response.text
     except Exception as e:
-        return f"Σφάλμα σύνδεσης με Gemini: {e}"
+        return f"Σφάλμα: {e}"
 
 def main():
     print("🚀 Gemini Voice Assistant (Memory & PDF Enabled) Online!")
