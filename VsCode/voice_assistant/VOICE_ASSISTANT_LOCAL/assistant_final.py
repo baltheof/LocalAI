@@ -11,15 +11,15 @@ conversation_history = [
             "Είσαι ένας έξυπνος βοηθός. Έχεις τη δυνατότητα να διαβάζεις αρχεία PDF. "
             "Πρέπει να απαντάς σε άπταιστα Ελληνικά. Αν ο χρήστης σε ρωτάει από πού απαντάς, "
             "εξήγησέ του ότι όταν χρησιμοποιείς φράσεις όπως 'σύμφωνα με το αρχείο', "
-            "περιορίζεσαι μόνο στο περιεχόμενο του PDF. Αν δεν γνωρίζεις κάτι, πες 'Δεν γνωρίζω'."
+            "περιορίζεσαι μόνο στο περιεχόμενο των PDF που έχεις φορτώσει. Αν δεν γνωρίζεις κάτι, πες 'Δεν γνωρίζω'."
         )
     }
 ]
 current_pdf_text = ""
+loaded_pdfs = []  # ΝΕΟ: Λίστα για να θυμόμαστε ποια αρχεία έχουμε φορτώσει
 
 # 2. ΣΥΝΑΡΤΗΣΗ ΑΝΑΓΝΩΡΙΣΗΣ ΦΩΝΗΣ (STT)
 def listen():
-    """Ακούει από το μικρόφωνο και επιστρέφει το κείμενο."""
     recognizer = sr.Recognizer()
     recognizer.pause_threshold = 2.0 
     with sr.Microphone() as source:
@@ -39,7 +39,6 @@ def listen():
 
 # 3. ΣΥΝΑΡΤΗΣΗ ΑΝΑΓΝΩΣΗΣ PDF
 def read_pdf(filename):
-    """Διαβάζει και επιστρέφει το κείμενο ενός PDF."""
     if not filename.endswith('.pdf'):
         filename += '.pdf'
     if not os.path.exists(filename):
@@ -54,22 +53,22 @@ def read_pdf(filename):
                 extracted = page.extract_text()
                 if extracted:
                     text_content += extracted + "\n"
-        print("✅ Το αρχείο διαβάστηκε επιτυχώς!")
+        print(f"✅ Το αρχείο '{filename}' διαβάστηκε επιτυχώς!")
         return text_content
     except Exception as e:
         print(f"❌ Σφάλμα κατά την ανάγνωση: {e}")
         return None
 
-# 4. ΣΥΝΑΡΤΗΣΗ ΕΠΙΚΟΙΝΩΝΙΑΣ ΜΕ OLLAMA (AI)
+# 4. ΣΥΝΑΡΤΗΣΗ ΕΠΙΚΟΙΝΩΝΙΑΣ ΜΕ AI
 def chat_with_ollama(user_text, restrict_to_pdf=False):
-    """Επικοινωνεί με το Ollama κρατώντας το ιστορικό της συζήτησης."""
     global conversation_history, current_pdf_text
     
     if restrict_to_pdf:
+        # Διορθωμένο Prompt για ΠΟΛΛΑ αρχεία
         message_content = (
-            f"ΟΔΗΓΙΑ: Απάντησε ΑΥΣΤΗΡΑ ΚΑΙ ΜΟΝΟ με βάση το παρακάτω κείμενο. "
-            f"Αν η πληροφορία δεν υπάρχει, πες 'Δεν υπάρχει στο αρχείο'.\n\n"
-            f"ΚΕΙΜΕΝΟ ΑΡΧΕΙΟΥ:\n{current_pdf_text}\n\n"
+            f"ΟΔΗΓΙΑ: Απάντησε ΑΥΣΤΗΡΑ ΚΑΙ ΜΟΝΟ με βάση τα παρακάτω κείμενα εγγράφων. "
+            f"Αν η πληροφορία δεν υπάρχει, πες 'Δεν υπάρχει στα αρχεία'.\n\n"
+            f"ΚΕΙΜΕΝΑ ΑΡΧΕΙΩΝ:\n{current_pdf_text}\n\n"
             f"ΕΡΩΤΗΣΗ: {user_text}"
         )
     else:
@@ -83,15 +82,18 @@ def chat_with_ollama(user_text, restrict_to_pdf=False):
         "model": "llama3.1", 
         "messages": conversation_history,
         "stream": False,
-        "options": { "temperature": 0.3 }
+        "options": { 
+            "temperature": 0.3,
+            "num_ctx": 16384  # ΝΕΟ: Μεγάλο παράθυρο μνήμης (16k) για να χωράνε πολλά PDF
+        }
     }
-
+    
     try:
         response = requests.post(url, json=payload)
         if response.status_code == 200:
             ai_reply = response.json().get('message', {}).get('content', 'Σφάλμα ανάγνωσης.')
             if restrict_to_pdf:
-                # Καθαρισμός του ιστορικού από το τεράστιο κείμενο για οικονομία μνήμης
+                # Καθαρισμός του ιστορικού από τα τεράστια κείμενα
                 conversation_history[-1]["content"] = user_text 
             conversation_history.append({"role": "assistant", "content": ai_reply})
             return ai_reply
@@ -99,10 +101,10 @@ def chat_with_ollama(user_text, restrict_to_pdf=False):
     except requests.exceptions.RequestException:
         return "❌ Δεν μπόρεσα να συνδεθώ στο Ollama."
 
-# 5. ΚΥΡΙΑ ΛΕΙΤΟΥΡΓΙΑ ΠΡΟΓΡΑΜΜΑΤΟΣ
+# 5. ΚΥΡΙΑ ΛΕΙΤΟΥΡΓΙΑ ΠΡΟΓΡΑΜΜΑΤΟΣ (MAIN)
 def main():
-    global current_pdf_text
-    print("🚀 ΕΚΚΙΝΗΣΗ LOCAL AI ΒΟΗΘΟΥ")
+    global current_pdf_text, loaded_pdfs
+    print("🚀 ΕΚΚΙΝΗΣΗ LOCAL AI ΒΟΗΘΟΥ (Υποστήριξη Πολλαπλών Αρχείων)")
 
     while True:
         print("\n" + "-"*50)
@@ -114,23 +116,30 @@ def main():
             print("👋 Αντίο!")
             break
 
-        # ΛΕΞΕΙΣ-ΚΛΕΙΔΙΑ ΠΟΥ ΕΝΕΡΓΟΠΟΙΟΥΝ ΤΗΝ ΑΝΑΖΗΤΗΣΗ ΣΤΟ PDF (ΜΕ ΚΑΙ ΧΩΡΙΣ ΤΟΝΟΥΣ)
+        # ΝΕΟ: Εντολή για Καθαρισμό Μνήμης Αρχείων
+        if any(word in user_input for word in ["καθάρισε", "καθαρισε", "ξέχασε", "ξεχασε"]) and any(word in user_input for word in ["μνήμη", "μνημη", "αρχεία", "αρχεια"]):
+            current_pdf_text = ""
+            loaded_pdfs = []
+            print("🧹 Η μνήμη των αρχείων καθαρίστηκε! Είμαι έτοιμος για νέα έγγραφα.")
+            continue
+
+        # ΛΕΞΕΙΣ-ΚΛΕΙΔΙΑ ΠΟΥ ΕΝΕΡΓΟΠΟΙΟΥΝ ΤΗΝ ΑΝΑΖΗΤΗΣΗ ΣΤΟ PDF
         pdf_triggers = [
             "σύμφωνα με", "συμφωνα με", 
-            "από το αρχείο", "απο το αρχειο", 
-            "βάσει του", "βασει του", 
+            "από το αρχείο", "απο το αρχειο", "από τα αρχεία", "απο τα αρχεια",
+            "βάσει του", "βασει του", "βάσει των",
             "γνώσεις του", "γνωσεις του", 
             "περιεχόμενο", "περιεχομενο", 
-            "αρχείο αυτό", "αρχειο αυτο", 
+            "αρχείο αυτό", "αρχειο αυτο", "αυτά τα αρχεία",
             "αυτό το αρχείο", "αυτο το αρχειο",
-            "του αρχείου", "του αρχειου"
+            "του αρχείου", "του αρχειου", "των αρχείων"
         ]
         is_pdf_request = any(phrase in user_input for phrase in pdf_triggers)
 
-        # Α. ΕΛΕΓΧΟΣ: ΕΙΝΑΙ ΕΡΩΤΗΣΗ ΓΙΑ ΤΟ ΗΔΗ ΦΟΡΤΩΜΕΝΟ PDF;
+        # Α. ΕΛΕΓΧΟΣ: ΕΙΝΑΙ ΕΡΩΤΗΣΗ ΓΙΑ ΤΑ ΗΔΗ ΦΟΡΤΩΜΕΝΑ PDF;
         if is_pdf_request:
             if not current_pdf_text:
-                print("❌ Δεν έχεις φορτώσει κάποιο αρχείο ακόμα. Πες π.χ. 'Διάβασε το αρχείο βάσεις'.")
+                print("❌ Δεν έχεις φορτώσει κάποιο αρχείο ακόμα. Πες π.χ. 'Διάβασε το αρχείο baseis'.")
                 continue
             reply = chat_with_ollama(user_input, restrict_to_pdf=True)
             print(f"\n🤖 AI: {reply}\n")
@@ -146,7 +155,7 @@ def main():
                 if idx != -1 and idx + 1 < len(words):
                     filename = words[idx + 1]
                     
-                    # ΑΠΟΦΥΓΗ ΛΑΘΟΥΣ: Αν η επόμενη λέξη είναι "αυτό" ή "του", χρησιμοποίησε τη μνήμη
+                    # ΑΠΟΦΥΓΗ ΛΑΘΟΥΣ: Αναφορά στο τρέχον περιεχόμενο
                     if filename in ["αυτό", "αυτο", "του", "του.", "αυτού", "αυτου"]:
                         if current_pdf_text:
                             reply = chat_with_ollama(user_input, restrict_to_pdf=True)
@@ -155,11 +164,19 @@ def main():
                             print("❌ Δεν έχεις φορτώσει κάποιο αρχείο ακόμα.")
                         continue
 
-                    # Μετατροπή ελληνικών ονομάτων στα αγγλικά ονόματα των αρχείων σου
                     if filename in ["βάσεις", "βασεις", "βασεισ", "βάσεισ", "βάσ", "βασ"]:
                         filename = "baseis"
                     
-                    current_pdf_text = read_pdf(filename)
+                    # ΝΕΑ ΛΟΓΙΚΗ: Φόρτωση και προσθήκη
+                    if filename in loaded_pdfs:
+                        print(f"⚠️ Το αρχείο '{filename}' είναι ήδη φορτωμένο στη μνήμη!")
+                    else:
+                        new_text = read_pdf(filename)
+                        if new_text:
+                            # Προσθέτουμε τον τίτλο του αρχείου για να τα ξεχωρίζει το AI
+                            current_pdf_text += f"\n\n--- ΠΗΓΗ ΑΡΧΕΙΟΥ: {filename} ---\n{new_text}"
+                            loaded_pdfs.append(filename)
+                            print(f"📚 Συνολικά φορτωμένα αρχεία ({len(loaded_pdfs)}): {', '.join(loaded_pdfs)}")
                 continue 
             except:
                 continue
@@ -171,3 +188,13 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+#ΟΔΗΓΕΙΕΣ
+#Λες: "Διάβασε το αρχείο baseis" -> Το φορτώνει.
+
+#Λες: "Διάβασε το αρχείο sql" -> Το φορτώνει και το προσθέτει στο προηγούμενο. Σου βγάζει μήνυμα: 📚 Συνολικά φορτωμένα αρχεία (2): baseis, sql.
+
+#Λες: "Κάνε μου ερωτήσεις σύμφωνα με τα αρχεία" -> Το AI θα ψάξει και θα συνδυάσει πληροφορίες και από τα δύο!
+
+#Αν γεμίσεις τη μνήμη ή θες να αλλάξεις μάθημα, λες: "Καθάρισε τα αρχεία" και η μνήμη αδειάζει για να ξεκινήσεις από την αρχή.
