@@ -41,13 +41,22 @@ def listen():
 def read_pdf(filename):
     if not filename.endswith('.pdf'):
         filename += '.pdf'
-    if not os.path.exists(filename):
-        print(f"❌ Το αρχείο '{filename}' δεν βρέθηκε. Βεβαιώσου ότι είσαι στον σωστό φάκελο.")
+        
+    # --- Η ΜΑΓΙΚΗ ΔΙΟΡΘΩΣΗ ΓΙΑ ΤΑ ΠΑΘΣ ---
+    # Βρίσκει τον φάκελο που βρίσκεται ΑΥΤΟ το αρχείο python (assistant_final.py)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Φτιάχνει το πλήρες path για το PDF (π.χ. C:\...\VOICE_ASSISTANT_LOCAL\baseis.pdf)
+    file_path = os.path.join(script_dir, filename)
+
+    if not os.path.exists(file_path):
+        print(f"❌ Το αρχείο '{filename}' δεν βρέθηκε. Βεβαιώσου ότι είναι στον ίδιο φάκελο με τον κώδικα.")
         return None
+
     print(f"📄 Διαβάζω το αρχείο: {filename}...")
     text_content = ""
     try:
-        with open(filename, 'rb') as file:
+        # Προσοχή: Ανοίγουμε το file_path, όχι σκέτο το filename
+        with open(file_path, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
             for page in pdf_reader.pages:
                 extracted = page.extract_text()
@@ -123,16 +132,18 @@ def main():
             print("🧹 Η μνήμη των αρχείων καθαρίστηκε! Είμαι έτοιμος για νέα έγγραφα.")
             continue
 
-        # ΛΕΞΕΙΣ-ΚΛΕΙΔΙΑ ΠΟΥ ΕΝΕΡΓΟΠΟΙΟΥΝ ΤΗΝ ΑΝΑΖΗΤΗΣΗ ΣΤΟ PDF
+# ΛΕΞΕΙΣ-ΚΛΕΙΔΙΑ ΠΟΥ ΕΝΕΡΓΟΠΟΙΟΥΝ ΤΗΝ ΑΝΑΖΗΤΗΣΗ ΣΤΟ PDF
         pdf_triggers = [
             "σύμφωνα με", "συμφωνα με", 
             "από το αρχείο", "απο το αρχειο", "από τα αρχεία", "απο τα αρχεια",
+            "ποιο αρχείο", "ποιο αρχειο", "από ποιο", "απο ποιο", # <-- ΝΕΑ ΠΡΟΣΘΗΚΗ
             "βάσει του", "βασει του", "βάσει των",
             "γνώσεις του", "γνωσεις του", 
             "περιεχόμενο", "περιεχομενο", 
             "αρχείο αυτό", "αρχειο αυτο", "αυτά τα αρχεία",
             "αυτό το αρχείο", "αυτο το αρχειο",
-            "του αρχείου", "του αρχειου", "των αρχείων"
+            "του αρχείου", "του αρχειου", "των αρχείων",
+            "περίληψη", "περιληψη", "τι λέει", "τι λεει", "μέσα"
         ]
         is_pdf_request = any(phrase in user_input for phrase in pdf_triggers)
 
@@ -145,7 +156,7 @@ def main():
             print(f"\n🤖 AI: {reply}\n")
 
         # Β. ΕΛΕΓΧΟΣ: ΕΙΝΑΙ ΕΝΤΟΛΗ ΓΙΑ ΦΟΡΤΩΣΗ ΝΕΟΥ ΑΡΧΕΙΟΥ;
-        elif any(kw in user_input for kw in ["διάβασ", "διαβάσ", "αρχείο", "αρχειο"]):
+        elif any(kw in user_input for kw in ["διάβασ", "διαβάσ", "αρχείο", "αρχειο", "φορτωσ", "φόρτωσ"]):
             words = user_input.split()
             try:
                 idx = -1
@@ -153,10 +164,14 @@ def main():
                 elif "αρχειο" in words: idx = words.index("αρχειο")
                 
                 if idx != -1 and idx + 1 < len(words):
-                    filename = words[idx + 1]
+                    raw_filename = words[idx + 1]
                     
-                    # ΑΠΟΦΥΓΗ ΛΑΘΟΥΣ: Αναφορά στο τρέχον περιεχόμενο
-                    if filename in ["αυτό", "αυτο", "του", "του.", "αυτού", "αυτου"]:
+                    # --- ΚΑΘΑΡΙΣΜΟΣ ΑΠΟ ΣΤΙΞΗ ---
+                    # Αφαιρεί ερωτηματικά, τελείες και κόμματα για να μην μπερδεύεται
+                    filename = raw_filename.strip("?;.,!")
+                    
+                    ignore_words = ["αυτό", "αυτο", "του", "αυτού", "αυτου", "δεν", "που", "είναι", "ειναι", "έχει", "εχει", "μου", "για", "ποιο"]
+                    if filename in ignore_words:
                         if current_pdf_text:
                             reply = chat_with_ollama(user_input, restrict_to_pdf=True)
                             print(f"\n🤖 AI: {reply}\n")
@@ -164,16 +179,28 @@ def main():
                             print("❌ Δεν έχεις φορτώσει κάποιο αρχείο ακόμα.")
                         continue
 
-                    if filename in ["βάσεις", "βασεις", "βασεισ", "βάσεισ", "βάσ", "βασ"]:
-                        filename = "baseis"
+                    # --- ΝΕΑ ΛΟΓΙΚΗ (ΚΑΙ ΓΙΑ ΚΟΛΛΗΤΕΣ ΛΕΞΕΙΣ) ---
+                    next_word = words[idx + 2].strip("?;.,!") if idx + 2 < len(words) else ""
+
+                    # Πιάσιμο κολλητών λέξεων (π.χ. "βασεισ2")
+                    if filename in ["βάσεις2", "βασεις2", "βασεισ2", "baseis2"]:
+                        filename = "baseis2"
+                    elif filename in ["βάσεις3", "βασεις3", "βασεισ3", "baseis3"]:
+                        filename = "baseis3"
+                    elif filename in ["βάσεις", "βασεις", "βασεισ", "βάσεισ", "βάσ", "βασ", "baseis"]:
+                        if next_word in ["2", "δύο", "δυο"]:
+                            filename = "baseis2"
+                        elif next_word in ["3", "τρία", "τρια"]:
+                            filename = "baseis3"
+                        else:
+                            filename = "baseis"
+                    # ----------------------------------------
                     
-                    # ΝΕΑ ΛΟΓΙΚΗ: Φόρτωση και προσθήκη
                     if filename in loaded_pdfs:
                         print(f"⚠️ Το αρχείο '{filename}' είναι ήδη φορτωμένο στη μνήμη!")
                     else:
                         new_text = read_pdf(filename)
                         if new_text:
-                            # Προσθέτουμε τον τίτλο του αρχείου για να τα ξεχωρίζει το AI
                             current_pdf_text += f"\n\n--- ΠΗΓΗ ΑΡΧΕΙΟΥ: {filename} ---\n{new_text}"
                             loaded_pdfs.append(filename)
                             print(f"📚 Συνολικά φορτωμένα αρχεία ({len(loaded_pdfs)}): {', '.join(loaded_pdfs)}")
@@ -190,7 +217,7 @@ if __name__ == "__main__":
     main()
 
 
-#ΟΔΗΓΕΙΕΣ
+#ΟΔΗΓΙΕΣ
 #Λες: "Διάβασε το αρχείο baseis" -> Το φορτώνει.
 
 #Λες: "Διάβασε το αρχείο sql" -> Το φορτώνει και το προσθέτει στο προηγούμενο. Σου βγάζει μήνυμα: 📚 Συνολικά φορτωμένα αρχεία (2): baseis, sql.
