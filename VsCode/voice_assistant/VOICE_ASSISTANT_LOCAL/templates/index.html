@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local AI Assistant</title>
+    <style>
+        /* ΕΔΩ ΕΙΝΑΙ ΤΟ CSS - ΤΑ ΧΡΩΜΑΤΑ ΚΑΙ ΟΙ ΜΟΡΦΟΠΟΙΗΣΕΙΣ */
+        :root { --bg-color: #1e1e2e; --sidebar-bg: #181825; --text-color: #cdd6f4; --accent: #89b4fa; --user-msg: #313244; --ai-msg: #45475a; }
+        body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg-color); color: var(--text-color); display: flex; height: 100vh; overflow: hidden; }
+        
+        /* Sidebar (Διαχείριση) */
+        .sidebar { width: 300px; background-color: var(--sidebar-bg); padding: 20px; display: flex; flex-direction: column; border-right: 1px solid #313244; transition: transform 0.3s ease; }
+        .sidebar.hidden { transform: translateX(-100%); position: absolute; height: 100%; z-index: 10; }
+        .sidebar h2 { font-size: 1.1rem; margin-top: 0; color: var(--accent); border-bottom: 1px solid #313244; padding-bottom: 10px;}
+        
+        .section-box { flex-grow: 1; overflow-y: auto; margin-bottom: 15px; padding: 10px; background: #11111b; border-radius: 8px; display: flex; flex-direction: column;}
+        .section-box ul { list-style: none; padding: 0; margin: 0; }
+        .section-box li { padding: 8px; border-bottom: 1px solid #313244; font-size: 0.9rem; display: flex; justify-content: space-between; align-items: center; }
+        .section-box a { color: #a6e3a1; text-decoration: none; font-weight: bold;}
+        .section-box a:hover { text-decoration: underline; color: #94e2d5; }
+        
+        .delete-file-btn { background: none; border: none; cursor: pointer; color: #f38ba8; transition: 0.2s; font-size: 1.2rem; padding: 0 5px; font-weight: bold; }
+        .delete-file-btn:hover { color: #e64553; transform: scale(1.2); }
+
+        .history-item { color: #bac2de; font-size: 0.85rem !important; font-style: italic; }
+
+        .sidebar-btn { background-color: #313244; color: white; border: none; padding: 10px; margin-bottom: 10px; border-radius: 5px; cursor: pointer; transition: 0.2s; font-weight: bold;}
+        .sidebar-btn:hover { background-color: var(--accent); color: #111; }
+        .btn-danger { background-color: #f38ba8; color: #111; margin-bottom: 0;}
+        .btn-danger:hover { background-color: #e64553; color: white; }
+
+        /* Main Chat Area */
+        .main-chat { flex-grow: 1; display: flex; flex-direction: column; width: 100%; position: relative;}
+        
+        /* Top Header */
+        .chat-header { padding: 15px 20px; background-color: var(--sidebar-bg); border-bottom: 1px solid #313244; display: flex; justify-content: space-between; align-items: center;}
+        .menu-btn { background: none; border: none; color: var(--text-color); font-size: 1.5rem; cursor: pointer; }
+        .menu-btn:hover { color: var(--accent); }
+        .new-chat-btn { background-color: transparent; border: 1px solid var(--accent); color: var(--accent); padding: 8px 15px; border-radius: 5px; cursor: pointer; transition: 0.2s;}
+        .new-chat-btn:hover { background-color: var(--accent); color: #111; }
+
+        .chat-history { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        .message { max-width: 75%; padding: 12px 16px; border-radius: 8px; line-height: 1.5; word-wrap: break-word; }
+        .user-message { background-color: var(--user-msg); align-self: flex-end; border-bottom-right-radius: 0; }
+        .ai-message { background-color: var(--ai-msg); align-self: flex-start; border-bottom-left-radius: 0; }
+        
+        /* Input Area */
+        .input-area { padding: 20px; background-color: var(--sidebar-bg); display: flex; gap: 10px; align-items: center; border-top: 1px solid #313244;}
+        input[type="text"] { flex-grow: 1; padding: 15px; border-radius: 8px; border: 1px solid #45475a; background-color: #11111b; color: white; font-size: 1rem; outline: none; }
+        input[type="text"]:focus { border-color: var(--accent); }
+        .action-btn { padding: 15px 25px; border-radius: 8px; border: none; font-size: 1rem; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        .send-btn { background-color: var(--accent); color: #111; }
+        .send-btn:hover { background-color: #b4befe; }
+        .mic-btn { background-color: #f9e2af; color: #111; font-size: 1.2rem; padding: 15px 20px; }
+        .mic-btn:hover { background-color: #f38ba8; }
+        
+        #loading { display: none; text-align: center; color: var(--accent); font-size: 0.9rem; font-style: italic; margin-bottom: 10px;}
+    </style>
+</head>
+<body>
+
+    <div class="sidebar" id="sidebar">
+        <h2>Φορτωμένα Αρχεία</h2>
+        <button class="sidebar-btn" onclick="sendCommand('διάβασε όλα τα αρχεία')">Φόρτωση Όλης της Βάσης</button>
+        <div class="section-box" style="flex-grow: 0.5;">
+            <ul id="loaded-files-list">
+                <li style="color: gray; display: block;">Η μνήμη είναι άδεια.</li>
+            </ul>
+        </div>
+        <button class="sidebar-btn btn-danger" onclick="sendCommand('καθάρισε τη μνήμη')">🗑️ Άδειασμα Μνήμης</button>
+
+        <h2 style="margin-top: 20px;">Ιστορικό Ερωτήσεων</h2>
+        <div class="section-box">
+            <ul id="session-history-list">
+                <li style="color: gray; display: block;">Δεν υπάρχουν ερωτήσεις ακόμα.</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="main-chat">
+        <div class="chat-header">
+            <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+            <button class="new-chat-btn" onclick="startNewChat()">+ Νέα Συνομιλία</button>
+        </div>
+
+        <div class="chat-history" id="chat-history">
+            <div class="message ai-message">Γεια σου! Είμαι ο προσωπικός σου AI βοηθός. Η λογική μου λειτουργεί ακριβώς όπως με έμαθες. Πώς μπορώ να βοηθήσω;</div>
+        </div>
+        
+        <div id="loading">Το AI σκέφτεται (περιμένετε)...</div>
+
+        <div class="input-area">
+            <button class="action-btn mic-btn" onclick="startVoice()" title="Μίλησε στο μικρόφωνο">🎤</button>
+            <input type="text" id="user-input" placeholder="Γράψε την ερώτηση ή την εντολή σου..." onkeypress="handleEnter(event)">
+            <button class="action-btn send-btn" onclick="sendText()">Αποστολή</button>
+        </div>
+    </div>
+
+    <script>
+        const chatHistory = document.getElementById('chat-history');
+        const userInput = document.getElementById('user-input');
+        const loading = document.getElementById('loading');
+        const fileList = document.getElementById('loaded-files-list');
+        const sessionHistoryList = document.getElementById('session-history-list');
+        const sidebar = document.getElementById('sidebar');
+
+        let questionCount = 0;
+
+        function toggleSidebar() {
+            sidebar.classList.toggle('hidden');
+        }
+
+        function appendMessage(text, sender) {
+            const div = document.createElement('div');
+            div.className = `message ${sender}-message`;
+            div.innerText = text;
+            chatHistory.appendChild(div);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+
+            // Αν είναι ερώτηση του χρήστη, βάλτο στο πλευρικό ιστορικό
+            if(sender === 'user' && !text.includes('🎤') && !text.includes('διάβασε όλα') && !text.includes('καθάρισε') && !text.includes('διέγραψε το αρχείο')) {
+                if(questionCount === 0) sessionHistoryList.innerHTML = '';
+                const li = document.createElement('li');
+                li.className = 'history-item';
+                li.innerText = text;
+                sessionHistoryList.appendChild(li);
+                questionCount++;
+            }
+        }
+
+        function updateFileList(files) {
+            fileList.innerHTML = '';
+            if (files.length === 0) {
+                fileList.innerHTML = '<li style="color: gray; display: block;">Η μνήμη είναι άδεια.</li>';
+            } else {
+                files.forEach(file => {
+                    const li = document.createElement('li');
+                    
+                    // Κουμπί ανοίγματος του PDF (Το Link)
+                    const linkSpan = document.createElement('span');
+                    linkSpan.innerHTML = `<a href="/pdf/${file}" target="_blank" title="Άνοιγμα PDF">${file}</a>`;
+                    
+                    // Κουμπί Διαγραφής (Το Χ σαν κείμενο)
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.innerHTML = '&times;'; // HTML σύμβολο για το πολλαπλασιασμό / κλείσιμο
+                    deleteBtn.className = 'delete-file-btn';
+                    deleteBtn.title = 'Διαγραφή αρχείου';
+                    // Όταν πατιέται, στέλνει εντολή διαγραφής στον Server
+                    deleteBtn.onclick = function() {
+                        sendCommand('διέγραψε το αρχείο ' + file);
+                    };
+
+                    li.appendChild(linkSpan);
+                    li.appendChild(deleteBtn);
+                    fileList.appendChild(li);
+                });
+            }
+        }
+
+        async function startNewChat() {
+            try {
+                await fetch('/new_chat', { method: 'POST' });
+                chatHistory.innerHTML = '<div class="message ai-message">Γεια σου! Η μνήμη της συνομιλίας καθαρίστηκε. Είμαι έτοιμος για νέα ερωτήματα!</div>';
+                sessionHistoryList.innerHTML = '<li style="color: gray; display: block;">Δεν υπάρχουν ερωτήσεις ακόμα.</li>';
+                questionCount = 0;
+            } catch(e) {
+                console.error("Σφάλμα Νέας Συνομιλίας");
+            }
+        }
+
+        async function processRequest(text, isVoice = false) {
+            if (!text && !isVoice) return;
+            
+            if (text) {
+                // Αν η εντολή είναι για αυτόματη διαγραφή, δεν τη δείχνουμε στο chat
+                if (!text.startsWith('διέγραψε το αρχείο')) {
+                    appendMessage(text, 'user');
+                }
+                userInput.value = '';
+            }
+
+            loading.style.display = 'block';
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text, is_voice: isVoice })
+                });
+                
+                const data = await response.json();
+                
+                if (data.user_text_from_voice) {
+                    appendMessage("🎤 " + data.user_text_from_voice, 'user');
+                }
+                
+                // Δείχνουμε την απάντηση (εκτός κι αν είναι απλό μήνυμα διαγραφής αρχείου)
+                if (!text.startsWith('διέγραψε το αρχείο')) {
+                    appendMessage(data.reply, 'ai');
+                }
+                
+                updateFileList(data.loaded_files);
+                
+            } catch (error) {
+                appendMessage("Σφάλμα επικοινωνίας με τον Server.", 'ai');
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        function sendText() { processRequest(userInput.value); }
+        function sendCommand(cmd) { processRequest(cmd); }
+        function startVoice() { processRequest("", true); }
+        function handleEnter(e) { if (e.key === 'Enter') sendText(); }
+    </script>
+</body>
+</html>
