@@ -22,11 +22,26 @@ system_prompt = {
 
 conversation_history   = [system_prompt]
 loaded_pdfs            = {}
-last_target_file       = None
+last_target_file       = None   # Αρχείο που ζήτησε ο χρήστης
+last_found_file        = None   # Αρχείο όπου βρέθηκε ΠΡΑΓΜΑΤΙΚΑ η απάντηση ← ΝΕΟ
 awaiting_fallback      = False
 last_fallback_question = ""
 
 MAX_HISTORY_PAIRS = 10
+
+TASK_KEYWORDS = [
+    "πολλαπλής", "πολλαπλης", "πολλαπλη", "πολλαπλη",
+    "quiz", "τεστ", "test",
+    "ερωτήσεις", "ερωτησεις", "ερώτηση μελέτης", "ερωτηση μελετης",
+    "εξέταση", "εξεταση", "εξετάσεις", "εξετασεις",
+    "flashcard", "flashcards",
+    "σύνοψη", "συνοψη", "σύνοψε", "συνοψε",
+    "κάνε μου", "κανε μου",
+    "φτιάξε", "φτιαξε",
+    "δημιούργησε", "δημιουργησε",
+    "δοκιμασία", "δοκιμασια",
+    "επανάληψη", "επαναληψη",
+]
 
 
 # ==========================================
@@ -40,6 +55,8 @@ def trim_history():
     if len(rest) > MAX_HISTORY_PAIRS * 2:
         rest = rest[-(MAX_HISTORY_PAIRS * 2):]
     conversation_history = system + rest
+
+
 
 
 def get_database_path():
@@ -82,6 +99,17 @@ def load_all_database_pdfs():
 
 
 def get_filename_from_input(user_input):
+    # Πρώτα: ακριβές match με φορτωμένα αρχεία
+    greek_to_latin = {"βάσεις": "baseis", "βασεις": "baseis", "βάση": "baseis", "βαση": "baseis"}
+    for greek, latin in greek_to_latin.items():
+        if greek in user_input.lower():
+            user_input = user_input.lower().replace(greek, latin)
+        break
+
+    for fname in loaded_pdfs.keys():
+        if fname.lower() in user_input.lower():
+            return fname
+
     if "βασ" in user_input or "bas" in user_input:
         match = re.search(r'\d+', user_input)
         if match:
@@ -96,7 +124,11 @@ def get_filename_from_input(user_input):
         for word, num in word_to_num.items():
             if word in user_input.split():
                 return f"baseis{num}"
-        return "baseis"
+        # Χωρίς αριθμό → ψάχνουμε αν υπάρχει "baseis" (χωρίς αριθμό) στα φορτωμένα
+        if "baseis" in loaded_pdfs:
+            return "baseis"
+        return None
+
     words = user_input.split()
     for kw in ["αρχείο", "αρχειο"]:
         if kw in words:
@@ -109,7 +141,7 @@ def get_filename_from_input(user_input):
 def call_ollama(messages):
     url     = "http://localhost:11434/api/chat"
     payload = {
-        "model": "llama3.1:8b",
+        "model":    "llama3.1:8b",
         "messages": messages,
         "stream":   False,
         "options":  {"temperature": 0.0, "num_ctx": 16384}
@@ -124,45 +156,39 @@ def call_ollama(messages):
 
 
 # ==========================================
-# 3. ΚΕΝΤΡΙΚΗ ΛΟΓΙΚΗ ΑΠΑΝΤΗΣΗΣ ΑΠΟ PDF
+# 3. ΣΥΝΑΡΤΗΣΕΙΣ ΑΠΑΝΤΗΣΗΣ
 # ==========================================
 
 def check_topic_in_single_file(question: str, filename: str, text: str) -> bool:
     system_content = (
-        "Είσαι ένας ελεγκτής κειμένου. "
-        "Απάντησε ΜΟΝΟ με YES ή NO — τίποτα άλλο.\n"
-        "YES = η έννοια ή η λέξη υπάρχει στο κείμενο με οποιαδήποτε μορφή "
-        "(κεφαλαία, πεζά, συνώνυμο, ή σχετική αναφορά).\n"
-        "NO  = δεν υπάρχει καμία σχετική αναφορά πουθενά στο κείμενο.\n\n"
-        f"ΚΕΙΜΕΝΟ ({filename}):\n\"\"\"\n{text}\n\"\"\""
+        "You are a text checker. Reply with ONLY the word YES or NO. Nothing else.\n"
+        "YES = the topic exists in the text.\n"
+        "NO = the topic does not exist in the text.\n"
+        "Do not write anything else. Do not explain. Just YES or NO.\n\n"
+        f"TEXT ({filename}):\n\"\"\"\n{text}\n\"\"\""
     )
     messages = [
         {"role": "system", "content": system_content},
-        {"role": "user",   "content": f"Υπάρχει στο κείμενο κάτι σχετικό με το θέμα της ερώτησης; Ερώτηση: {question}"}
+        {"role": "user", "content": f"Does the text contain information about: {question}? Answer YES or NO only."}
     ]
     raw = call_ollama(messages).strip().lower()
-    print(f"  [CHECK] {filename} → '{raw}'")
+    print(f"  [CHECK] {filename} → '{raw[:10]}'")
     return raw.startswith("yes")
 
 
 def answer_from_single_file(question: str, filename: str, text: str) -> str:
-
+    """Πλήρης απάντηση από ΕΝΑ αρχείο."""
     system_content = (
         f"Είσαι αναλυτής εγγράφων. Χρησιμοποιείς ΑΠΟΚΛΕΙΣΤΙΚΑ το αρχείο: {filename}.\n\n"
         f"ΚΑΝΟΝΕΣ:\n"
-        f"1. Απάντησε με δικά σου λόγια — σύντομα, καθαρά, οργανωμένα.\n"
-        f"2. Τα παραδείγματα κώδικα πρέπει να είναι ΑΚΡΙΒΩΣ αυτά που υπάρχουν στο κείμενο.\n"
-        f"   Αν το κείμενο έχει 'ΕΡΓΑΖΟΜΕΝΟΙ' και 'Μισθός', γράψε ΑΥΤΑ — όχι δικά σου.\n"
-        f"3. Παραδείγματα: markdown code block (```sql ... ```) με κάθε clause σε νέα γραμμή.\n"
-        f"4. ΑΠΑΓΟΡΕΥΕΤΑΙ η εφεύρεση πινάκων, πεδίων ή τιμών που δεν υπάρχουν στο κείμενο.\n"
-        f"   ΑΠΑΓΟΡΕΥΕΤΑΙ να αναφέρεις οποιοδήποτε άλλο αρχείο εκτός του {filename}.\n"
-        f"   Η πηγή στο τέλος πρέπει να είναι ΜΟΝΟ: 'Πηγή: {filename}'\n"
-        f"5. ΓΡΑΨΕ ΜΟΝΟ ΟΣΑ ΠΑΡΑΔΕΙΓΜΑΤΑ ΥΠΑΡΧΟΥΝ ΣΤΟ ΚΕΙΜΕΝΟ — μην προσθέτεις επιπλέον.\n"
-        f"6. Αν ζητηθεί θεωρία, γράψε ΜΟΝΟ τη θεωρία που αφορά το ερώτημα, όχι γενική θεωρία.\n"
-        f"7. Στο ΤΕΛΟΣ γράψε ΥΠΟΧΡΕΩΤΙΚΑ: 'Πηγή: {filename}'\n\n"
-        f"ΚΕΙΜΕΝΟ:\n\"\"\"\n{text}\n\"\"\""
+            f"ΜΟΡΦΗ ΑΠΑΝΤΗΣΗΣ (ακολούθησε αυτή ακριβώς):\n"
+            f"1. 2-4 γραμμές θεωρία με δικά σου λόγια — μόνο ό,τι αφορά την ερώτηση.\n"
+            f"2. Αν υπάρχει παράδειγμα κώδικα στο κείμενο: γράψε το σε ```sql``` block "
+            f"   ΑΚΡΙΒΩΣ όπως είναι, με κάθε clause σε νέα γραμμή.\n"
+            f"3. Αν δεν υπάρχει παράδειγμα, παράλειψε εντελώς το βήμα 2.\n"
+            f"4. ΤΕΛΕΥΤΑΙΑ γραμμή ΠΑΝΤΑ: 'Πηγή: {filename}' — ΜΟΝΟ ΜΙΑ ΦΟΡΑ.\n"
+            f"ΑΠΑΓΟΡΕΥΕΤΑΙ: εξωτερική γνώση, επινοημένα παραδείγματα, επανάληψη 'Πηγή:'.\n"
     )
-
     messages = [{"role": "system", "content": system_content}]
     recent = [m for m in conversation_history if m["role"] != "system"][-4:]
     messages.extend(recent)
@@ -171,9 +197,9 @@ def answer_from_single_file(question: str, filename: str, text: str) -> str:
 
 def answer_from_pdf(question: str, context_files: dict):
     """
-    Ψάχνει ΟΛΑ τα αρχεία.
-    Συλλέγει όλα τα αρχεία που έχουν σχετικό θέμα (YES)
-    και επιστρέφει συνδυασμένη απάντηση από όλα.
+    Ψάχνει ΟΛΑ τα αρχεία με pre-check ένα-ένα.
+    Επιστρέφει: (reply_text | None, found: bool, matched_filename | None)
+    ← Τώρα επιστρέφει και το όνομα του αρχείου που βρήκε
     """
     matched_files = {}
 
@@ -184,13 +210,12 @@ def answer_from_pdf(question: str, context_files: dict):
             matched_files[filename] = text
 
     if not matched_files:
-        return None, False
+        return None, False, None
 
     if len(matched_files) == 1:
-        # Ένα μόνο αρχείο → απλή απάντηση
         filename, text = next(iter(matched_files.items()))
         answer = answer_from_single_file(question, filename, text)
-        return answer, True
+        return answer, True, filename  # ← επιστρέφει το filename
 
     # Πολλά αρχεία → συνδυασμένη απάντηση
     combined_context = "\n\n".join(
@@ -200,21 +225,77 @@ def answer_from_pdf(question: str, context_files: dict):
     sources = ", ".join(matched_files.keys())
 
     system_content = (
-        f"Είσαι αναλυτής εγγράφων. Χρησιμοποιείς ΑΠΟΚΛΕΙΣΤΙΚΑ τα παρακάτω αρχεία: {sources}.\n\n"
+        f"Είσαι αναλυτής εγγράφων. Χρησιμοποιείς ΑΠΟΚΛΕΙΣΤΙΚΑ τα: {sources}.\n\n"
         f"ΚΑΝΟΝΕΣ:\n"
-        f"1. Απάντησε οργανωμένα — ξεχώρισε τι λέει κάθε αρχείο.\n"
-        f"2. Τα παραδείγματα κώδικα να είναι ΑΚΡΙΒΩΣ αυτά που υπάρχουν στο κείμενο.\n"
-        f"3. ΑΠΑΓΟΡΕΥΕΤΑΙ η εφεύρεση πινάκων, πεδίων ή τιμών που δεν υπάρχουν στο κείμενο.\n"
-        f"4. ΓΡΑΨΕ ΜΟΝΟ ΟΣΑ ΠΑΡΑΔΕΙΓΜΑΤΑ ΥΠΑΡΧΟΥΝ ΣΤΟ ΚΕΙΜΕΝΟ.\n"
-        f"5. Στο ΤΕΛΟΣ γράψε ΥΠΟΧΡΕΩΤΙΚΑ: 'Πηγή: {sources}'\n\n"
+        f"1. Απάντησε οργανωμένα — ξεχώρισε τι λέει κάθε αρχείο αν διαφέρουν.\n"
+        f"2. Παραδείγματα κώδικα ΑΚΡΙΒΩΣ όπως στο κείμενο, σε markdown code block.\n"
+        f"3. ΑΠΑΓΟΡΕΥΕΤΑΙ η εφεύρεση στοιχείων που δεν υπάρχουν στο κείμενο.\n"
+        f"4. Στο ΤΕΛΟΣ: 'Πηγή: {sources}'\n\n"
         f"ΚΕΙΜΕΝΟ:\n\"\"\"\n{combined_context}\n\"\"\""
     )
     messages = [{"role": "system", "content": system_content}]
     recent = [m for m in conversation_history if m["role"] != "system"][-4:]
     messages.extend(recent)
     answer = call_ollama(messages)
-    return answer, True
+    first_match = next(iter(matched_files.keys()))
+    return answer, True, first_match  # ← επιστρέφει το πρώτο αρχείο που βρέθηκε
 
+
+def perform_task(user_request: str, context_files: dict) -> str:
+    num_match = re.search(r'\d+', user_request)
+    num_q = int(num_match.group()) if num_match else 4
+
+    # # για πολλαπλησ αλλαγη- ελεγχοσ αν επηρεαζει μετα τισ υπολοιπεσ ερωτησεισ!!!!
+    # # Για γενικές ερωτήσεις: παίρνουμε num_q τυχαία αρχεία
+    # import random
+    # sample_size = min(num_q, len(context_files))
+    # sampled = dict(random.sample(list(context_files.items()), sample_size))
+    # relevant_files = sampled
+
+    
+    # Βήμα 1: βρες ποια αρχεία έχουν σχετικό υλικό (pre-check)
+    relevant_files = {}
+    for filename, text in context_files.items():
+        if check_topic_in_single_file(user_request, filename, text):
+            relevant_files[filename] = text
+        if len(relevant_files) >= num_q:
+            break
+
+    # Αν δεν βρέθηκε τίποτα, χρησιμοποίησε όλα
+    if not relevant_files:
+        relevant_files = dict(list(context_files.items())[:4])
+
+    sources = ", ".join(relevant_files.keys())
+    combined = "\n\n".join(
+        f"=== ΑΡΧΕΙΟ: {fn} ===\n{txt}"
+        for fn, txt in relevant_files.items()
+    )
+
+    system_content = (
+        f"Create EXACTLY {num_q} multiple choice questions from the material below.\n\n"
+        f"REQUIRED FORMAT — follow EXACTLY for each question:\n\n"
+        f"Ερώτηση 1: [ερώτηση;]\n"
+        f"Α) [επιλογή]\n"
+        f"Β) [επιλογή]\n"
+        f"Γ) [επιλογή]\n"
+        f"Δ) [επιλογή]\n"
+        f"✅ Σωστή: [γράμμα]) [κείμενο σωστής] — [σύντομη εξήγηση]\n"
+        f"📚 Πηγή: [exact filename, e.g. baseis7]\n\n"
+        f"RULES:\n"
+        f"- ALWAYS 4 options Α/Β/Γ/Δ per question.\n"
+        f"- NEVER write 'Απάντηση:' — ONLY ✅ Σωστή:\n"
+        f"- ALWAYS write 📚 Πηγή: after EACH question.\n"
+        f"- The correct answer position must vary (not always Β).\n"
+        f"- Use ONLY information from the material.\n"
+        f"- Answer in Greek.\n\n"
+        f"MATERIAL:\n\"\"\"\n{combined}\n\"\"\""
+    )
+
+    messages = [
+        {"role": "system", "content": system_content},
+        {"role": "user",   "content": f"Φτιάξε {num_q} ερωτήσεις πολλαπλής επιλογής."}
+    ]
+    return call_ollama(messages)
 
 def chat_general(user_text):
     return call_ollama(list(conversation_history))
@@ -238,9 +319,11 @@ def serve_pdf(filename):
 
 @app.route('/new_chat', methods=['POST'])
 def new_chat():
-    global conversation_history, last_target_file, awaiting_fallback, last_fallback_question
+    global conversation_history, last_target_file, last_found_file
+    global awaiting_fallback, last_fallback_question
     conversation_history   = [system_prompt]
     last_target_file       = None
+    last_found_file        = None
     awaiting_fallback      = False
     last_fallback_question = ""
     return jsonify({"status": "ok"})
@@ -248,7 +331,7 @@ def new_chat():
 
 @app.route('/chat', methods=['POST'])
 def process_request():
-    global loaded_pdfs, last_target_file
+    global loaded_pdfs, last_target_file, last_found_file
     global awaiting_fallback, last_fallback_question
 
     data              = request.json
@@ -273,53 +356,95 @@ def process_request():
     conversation_history.append({"role": "user", "content": user_input})
     trim_history()
 
+     # ── Ορθογραφικός έλεγχος ──
+    KNOWN_COMMANDS = [
+        "διάβασε", "διαβασε", "φόρτωσε", "φορτωσε",
+        "βγάλε", "βγαλε", "διέγραψε", "διεγραψε",
+        "άδειασε", "αδειασε", "καθάρισε", "καθαρισε",
+        "σύμφωνα", "συμφωνα", "από", "απο", "πες", "δώσε", "δωσε",
+        "κάνε", "κανε", "φτιάξε", "φτιαξε"
+    ]
+    looks_like_command = any(
+        kw in user_input for kw in ["αρχει", "βασ", "bas", "μνήμη", "μνημη"]
+    )
+    is_known = any(cmd in user_input for cmd in KNOWN_COMMANDS)
+    if looks_like_command and not is_known and len(user_input) < 60:
+        reply = (
+            "Δεν κατάλαβα την εντολή. Μήπως υπάρχει τυπογραφικό λάθος; "
+            "Παρακαλώ ξαναγράψτε. Παραδείγματα:\n"
+            "• 'Διέγραψε το αρχείο baseis10'\n"
+            "• 'Διάβασε το αρχείο baseis4'\n"
+            "• 'Άδειασε όλα τα αρχεία'"
+        )
+        conversation_history.append({"role": "assistant", "content": reply})
+        return jsonify({
+            "reply": reply,
+            "loaded_files": sorted(loaded_pdfs.keys()),
+            "user_text_from_voice": voice_text_for_ui
+        })
+
     reply = ""
 
-   # ── Α: Fallback αναμονή ──
-    print(f"[DEBUG] awaiting_fallback={awaiting_fallback}, input='{user_input}'")
+
+
+    # ══════════════════════════════════════════════════════
+    # Α: Fallback αναμονή
+    # ══════════════════════════════════════════════════════
+    print(f"[DEBUG] awaiting_fallback={awaiting_fallback}, last_target={last_target_file}, last_found={last_found_file}")
+
     if awaiting_fallback:
         positive = ["ναι", "αμε", "ψάξε", "ψαξε", "οκ", "κάντο", "καντο", "βεβαιως", "βεβαίως"]
         if any(w in user_input for w in positive):
             awaiting_fallback = False
-            # Φορτώνουμε όσα PDF δεν είναι ακόμα στη μνήμη
             load_all_database_pdfs()
-            # Ψάχνουμε ένα-ένα, παραλείποντας το αρχείο που ήδη απέτυχε
             fallback_files = {k: v for k, v in loaded_pdfs.items() if k != last_target_file}
             if not fallback_files:
                 reply = "Δεν υπάρχουν άλλα αρχεία στο database για αναζήτηση."
             else:
-                answer, found = answer_from_pdf(last_fallback_question, fallback_files)
-                reply = answer if found else \
-                    "Δεν βρέθηκε πληροφορία σχετικά με αυτό σε κανένα αρχείο του database."
+                answer, found, matched = answer_from_pdf(last_fallback_question, fallback_files)
+                if found:
+                    last_found_file = matched  # ← Ενημερώνουμε ποιο αρχείο βρήκε
+                    reply = answer
+                else:
+                    reply = "Δεν βρέθηκε πληροφορία σχετικά με αυτό σε κανένα αρχείο του database."
         else:
             awaiting_fallback = False
             reply = "Εντάξει, ακυρώθηκε η αναζήτηση στα υπόλοιπα αρχεία."
 
-    # ── Β: Διαχείριση αρχείων ──
+    # ══════════════════════════════════════════════════════
+    # Β: Διαχείριση αρχείων
+    # ══════════════════════════════════════════════════════
     elif any(kw in user_input for kw in ["καθάρισε", "καθαρισε", "άδειασε", "αδειασε"]) and \
-         any(kw in user_input for kw in ["μνήμη", "μνημη", "όλα", "ολα"]):
+         any(kw in user_input for kw in ["μνήμη", "μνημη", "όλα", "ολα", "αρχεία", "αρχεια"]):
         loaded_pdfs.clear()
         last_target_file = None
+        last_found_file  = None
         reply = "Η μνήμη καθαρίστηκε. Έβγαλα όλα τα αρχεία."
 
     elif any(w in user_input for w in ["βγάλε", "βγαλε", "αφαίρεσε", "αφαιρεσε",
                                         "διέγραψε", "διεγραψε", "σβήσε", "σβησε",
                                         "διάγραψε", "διαγραψε"]):
         fname = get_filename_from_input(user_input)
+        # Αν δεν βρέθηκε όνομα αρχείου στο κείμενο, χρησιμοποιούμε το τελευταίο ενεργό
+        if not fname:
+            fname = last_found_file or last_target_file
         if fname and fname in loaded_pdfs:
             del loaded_pdfs[fname]
-            if fname == last_target_file:
-                last_target_file = None
+            if fname == last_target_file: last_target_file = None
+            if fname == last_found_file:  last_found_file  = None
             reply = f"Το αρχείο '{fname}' αφαιρέθηκε από τη μνήμη. Απομένουν {len(loaded_pdfs)}."
         else:
-            reply = "Το αρχείο δεν βρέθηκε στη μνήμη."
+            reply = "Δεν βρέθηκε αρχείο για διαγραφή. Πες π.χ. 'Διέγραψε το αρχείο baseis4'."
 
     elif any(kw in user_input for kw in ["όλα", "ολα"]) and \
          any(kw in user_input for kw in ["διάβασ", "διαβασ"]):
         count = load_all_database_pdfs()
         reply = f"Φορτώθηκαν {count} νέα αρχεία. (Σύνολο: {len(loaded_pdfs)})"
 
-    elif any(kw in user_input for kw in ["διάβασ", "διαβασ", "φορτωσ", "φόρτωσ"]):
+    elif any(kw in user_input for kw in ["διάβασ", "διαβασ", "φορτωσ", "φόρτωσ",
+                                          "πρόσθεσ", "προσθεσ", "βάλε", "βαλε",
+                                          "ξαναβάλε", "ξαναβαλε", "ξαναφόρτω", "ξαναφορτω",
+                                          "πρόσθεσε", "προσθεσε"]):
         fname = get_filename_from_input(user_input)
         if fname:
             if fname in loaded_pdfs:
@@ -327,84 +452,61 @@ def process_request():
             else:
                 content = read_pdf(fname)
                 if content:
-                    loaded_pdfs[fname] = content
-                    last_target_file   = fname
+                    loaded_pdfs[fname]  = content
+                    last_target_file    = fname
                     reply = f"Το αρχείο '{fname}' φορτώθηκε επιτυχώς!"
                 else:
                     reply = f"Δεν βρέθηκε το αρχείο '{fname}' στον φάκελο database."
         else:
             reply = "Δεν κατάλαβα ποιο αρχείο να φορτώσω. Πες π.χ. 'Διάβασε το αρχείο baseis4'."
 
+
+    # ══════════════════════════════════════════════════════
+    # Γ: TASK REQUEST — quiz, πολλαπλής, σύνοψη κλπ
+    # Ελέγχεται ΠΡΙΝ το content search — δεν χρειάζεται pre-check
+    # ══════════════════════════════════════════════════════
+    elif any(kw in user_input for kw in TASK_KEYWORDS) and loaded_pdfs:
+        # Προτεραιότητα: last_found_file > last_target_file > όλα τα φορτωμένα
+        fname = get_filename_from_input(user_input)
+        if fname and fname in loaded_pdfs:
+            task_files = {fname: loaded_pdfs[fname]}
+        elif last_found_file and last_found_file in loaded_pdfs:
+            task_files = loaded_pdfs  # ← Χρησιμοποιεί ΟΛΑ, όχι μόνο το last_found
+        elif last_target_file and last_target_file in loaded_pdfs:
+            task_files = loaded_pdfs  # ← Ίδιο
+        else:
+            task_files = loaded_pdfs
+
+        reply = perform_task(user_input, task_files)
+
+    # changes for pollalpis
     elif any(w in user_input for w in ["ποια", "τι", "ποιο", "πού", "που"]) and \
-         any(w in user_input for w in ["αρχεία", "αρχεια", "pdf", "βρήκες", "βρηκες", "φορτωμεν"]):
+            any(w in user_input for w in ["αρχεία", "αρχεια", "pdf", "βρήκες", "βρηκες", "φορτωμεν"]):
         if loaded_pdfs:
             reply = f"Έχω φορτωμένα {len(loaded_pdfs)} αρχεία: {', '.join(sorted(loaded_pdfs.keys()))}"
         else:
             reply = "Δεν έχω κανένα αρχείο φορτωμένο αυτή τη στιγμή."
 
-    # ── Ε: Meta-εντολές (quiz, πολλαπλής, περίληψη, flashcards) ──
-    elif any(kw in user_input for kw in [
-        "πολλαπλής", "πολλαπλης", "quiz", "τεστ", "test",
-        "ερωτήσεις", "ερωτησεις", "εξέταση", "εξεταση",
-        "flashcard", "flashcards", "σύνοψη", "συνοψη",
-        "κάνε μου", "κανε μου", "φτιάξε", "φτιαξε",
-        "δημιούργησε", "δημιουργησε", 
-    ]):
-        if not loaded_pdfs:
-            reply = "Δεν έχεις φορτώσει κάποιο αρχείο. Πες π.χ. 'Διάβασε το αρχείο baseis4'."
-        else:
-            fname = get_filename_from_input(user_input)
-            if fname and fname in loaded_pdfs:
-                context_files = {fname: loaded_pdfs[fname]}
-            elif last_target_file and last_target_file in loaded_pdfs:
-                context_files = {last_target_file: loaded_pdfs[last_target_file]}
-            else:
-                context_files = loaded_pdfs
 
-            combined_context = "\n\n".join(
-                f"=== ΑΡΧΕΙΟ: {fn} ===\n{txt}"
-                for fn, txt in context_files.items()
-            )
-
-            system_content = (
-                "Είσαι εκπαιδευτικός βοηθός. Χρησιμοποιείς ΑΠΟΚΛΕΙΣΤΙΚΑ το παρακάτω υλικό.\n"
-                "ΚΑΝΟΝΕΣ:\n"
-                "1. Χρησιμοποίησε ΜΟΝΟ πληροφορίες που υπάρχουν ΡΗΤΑ στο ΥΛΙΚΟ παρακάτω.\n"
-                "2. ΜΗΝ αναφέρεις αρχεία που δεν υπάρχουν στο ΥΛΙΚΟ.\n"
-                "3. Για πολλαπλής επιλογής: φτιάξε ΑΚΡΙΒΩΣ 4 ΔΙΑΦΟΡΕΤΙΚΕΣ ερωτήσεις.\n"
-                "   ΑΠΑΓΟΡΕΥΕΤΑΙ να επαναλαμβάνεις την ίδια ερώτηση.\n"
-                "   Κάθε ερώτηση να έχει 4 επιλογές (Α-Δ), μία σωστή.\n"
-                "   Μετά από κάθε ερώτηση γράψε: ✅ Σωστή: [γράμμα] — [εξήγηση] (Πηγή: [αρχείο])\n"
-                "4. Απάντησε στα Ελληνικά.\n"
-                "5. ΜΗΝ εφευρίσκεις ερωτήσεις ή αρχεία εκτός του ΥΛΙΚΟΥ.\n"
-                "6. Στο ΤΕΛΟΣ γράψε ΜΟΝΟ τα αρχεία που υπάρχουν στο ΥΛΙΚΟ.\n\n"
-                f"ΥΛΙΚΟ:\n\"\"\"\n{combined_context}\n\"\"\""
-            ) 
-
-            messages = [{"role": "system", "content": system_content}]
-            for msg in conversation_history:
-                if msg["role"] != "system":
-                    messages.append(msg)
-            reply = call_ollama(messages)        
-
-    # ── Γ: Ερώτηση με ρητή αναφορά σε αρχείο ──
+    # ══════════════════════════════════════════════════════
+    # Δ: Ερώτηση με ρητή αναφορά σε αρχείο
+    # ══════════════════════════════════════════════════════
     elif any(phrase in user_input for phrase in [
         "σύμφωνα με", "συμφωνα με", "από το αρχείο", "απο το αρχειο",
         "από τα αρχεία", "απο τα αρχεια", "βάσει", "βασει",
         "τι λέει", "τι λεει", "περίληψη", "περιληψη",
-        "βάση των αρχείων", "βαση των αρχειων", "βάση αρχείων", "βαση αρχειων",
-        "βάση του αρχείου", "βαση του αρχειου", "με βάση", "με βαση",
-        "από τα pdf", "απο τα pdf", "στα αρχεία", "στα αρχεια"
+        "με βάση", "με βαση", "στα αρχεία", "στα αρχεια",
+        "από τα pdf", "απο τα pdf",
     ]):
-        
         if not loaded_pdfs:
             reply = "Δεν έχεις φορτώσει κάποιο αρχείο ακόμα. Πες π.χ. 'Διάβασε το αρχείο baseis4'."
         else:
             fname = get_filename_from_input(user_input)
             if fname and fname in loaded_pdfs:
                 last_target_file = fname
-                answer, found = answer_from_pdf(user_input, {fname: loaded_pdfs[fname]})
+                answer, found, matched = answer_from_pdf(user_input, {fname: loaded_pdfs[fname]})
                 if found:
+                    last_found_file = matched
                     reply = answer
                 else:
                     last_fallback_question = user_input
@@ -414,17 +516,24 @@ def process_request():
                         f"Να ψάξω στα υπόλοιπα αρχεία του database; (πείτε 'ναι')"
                     )
             else:
-                answer, found = answer_from_pdf(user_input, loaded_pdfs)
-                reply = answer if found else \
-                    "Δεν βρέθηκε πληροφορία σχετικά με αυτό σε κανένα από τα φορτωμένα αρχεία."
-                
-                
+                answer, found, matched = answer_from_pdf(user_input, loaded_pdfs)
+                if found:
+                    last_found_file = matched
+                    reply = answer
+                else:
+                    reply = "Δεν βρέθηκε πληροφορία σχετικά με αυτό σε κανένα από τα φορτωμένα αρχεία."
 
-    # ── Δ: Follow-up ή ελεύθερη ερώτηση ──
+    # ══════════════════════════════════════════════════════
+    # Ε: Follow-up ή ελεύθερη ερώτηση
+    # ══════════════════════════════════════════════════════
     else:
         if loaded_pdfs:
-            answer, found = answer_from_pdf(user_input, loaded_pdfs)
-            reply = answer if found else chat_general(user_input)
+            answer, found, matched = answer_from_pdf(user_input, loaded_pdfs)
+            if found:
+                last_found_file = matched
+                reply = answer
+            else:
+                reply = chat_general(user_input)
         else:
             reply = chat_general(user_input)
 
@@ -470,10 +579,11 @@ if __name__ == "__main__":
 # ==========================================
 # ΟΔΗΓΙΕΣ ΧΡΗΣΗΣ
 # ==========================================
-# ΦΟΡΤΩΣΗ:       "Διάβασε το αρχείο baseis4"
-# ΦΟΡΤΩΣΗ ΟΛΩΝ:  "Διάβασε όλα τα αρχεία"        → φορτώνει όλα τα PDF από το database/
-# ΕΡΩΤΗΣΗ:       "Σύμφωνα με το αρχείο baseis4, τι είναι το ER μοντέλο;"
-# FOLLOW-UP:     Η επόμενη ερώτηση ψάχνει αυτόματα στο ίδιο αρχείο
-# FALLBACK:      Αν δεν βρεθεί → "ναι" → φορτώνει ΟΛΑ τα PDF του database/ και ψάχνει
-# ΑΦΑΙΡΕΣΗ:      "Βγάλε το αρχείο baseis4"
-# ΚΑΘΑΡΙΣΜΟΣ:    "Άδειασε όλα τα αρχεία"
+# ΦΟΡΤΩΣΗ:        "Διάβασε το αρχείο baseis4"
+# ΦΟΡΤΩΣΗ ΟΛΩΝ:   "Διάβασε όλα τα αρχεία"
+# ΕΡΩΤΗΣΗ:        "Σύμφωνα με το αρχείο baseis4, τι είναι το ER μοντέλο;"
+# FOLLOW-UP:      Ψάχνει αυτόματα στο αρχείο που βρήκε την τελευταία απάντηση
+# QUIZ:           "Κάνε μου 4 πολλαπλής επιλογής" → από το αρχείο της τελευταίας απάντησης
+# FALLBACK:       "ναι" → φορτώνει ΟΛΑ τα PDF και ψάχνει
+# ΑΦΑΙΡΕΣΗ:       "Βγάλε το αρχείο baseis4"
+# ΚΑΘΑΡΙΣΜΟΣ:     "Άδειασε όλα τα αρχεία"

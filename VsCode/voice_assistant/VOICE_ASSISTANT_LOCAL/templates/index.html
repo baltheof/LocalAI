@@ -5,324 +5,414 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Local AI Assistant</title>
 
-    <!-- Markdown rendering -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
-    <!-- Syntax highlighting για κώδικα -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
     <style>
         :root {
-            --bg-color:    #1e1e2e;
-            --sidebar-bg:  #181825;
-            --text-color:  #cdd6f4;
-            --accent:      #89b4fa;
-            --user-msg:    #313244;
-            --ai-msg:      #45475a;
-            --code-bg:     #11111b;
-            --green:       #a6e3a1;
-            --red:         #f38ba8;
-            --yellow:      #f9e2af;
+            --bg:         #0f0f13;
+            --sidebar-bg: #13131a;
+            --panel-bg:   #1a1a24;
+            --border:     #2a2a3a;
+            --text:       #c8cfe8;
+            --text-muted: #6b7280;
+            --accent:     #6c8ef5;
+            --accent-dim: #6c8ef520;
+            --user-msg:   #1e1e2e;
+            --ai-msg:     #16161f;
+            --code-bg:    #0c0c12;
+            --green:      #4ade80;
+            --red:        #f87171;
+            --yellow:     #fbbf24;
+            --purple:     #a78bfa;
         }
 
-        * { box-sizing: border-box; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
-            margin: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
             display: flex;
             height: 100vh;
             overflow: hidden;
         }
 
-        /* ── SIDEBAR ── */
+        /* ══════════════════════════════════
+           SIDEBAR
+        ══════════════════════════════════ */
         .sidebar {
-            width: 300px;
-            background-color: var(--sidebar-bg);
-            padding: 20px;
+            width: 280px;
+            background: var(--sidebar-bg);
+            border-right: 1px solid var(--border);
             display: flex;
             flex-direction: column;
-            border-right: 1px solid #313244;
-            transition: transform 0.3s ease;
+            padding: 20px 16px;
+            gap: 14px;
             flex-shrink: 0;
+            transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
         }
+
         .sidebar.hidden {
             transform: translateX(-100%);
             position: absolute;
             height: 100%;
             z-index: 10;
         }
-        .sidebar h2 {
-            font-size: 1rem;
-            margin-top: 0;
-            color: var(--accent);
-            border-bottom: 1px solid #313244;
-            padding-bottom: 10px;
-            letter-spacing: 0.05em;
-        }
-        .section-box {
-            flex-grow: 1;
-            overflow-y: auto;
-            margin-bottom: 15px;
-            padding: 10px;
-            background: var(--code-bg);
-            border-radius: 8px;
+
+        .sidebar-logo {
             display: flex;
-            flex-direction: column;
-        }
-        .section-box ul { list-style: none; padding: 0; margin: 0; }
-        .section-box li {
-            padding: 8px;
-            border-bottom: 1px solid #313244;
-            font-size: 0.85rem;
-            display: flex;
-            justify-content: space-between;
             align-items: center;
+            gap: 10px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
         }
-        .section-box a { color: var(--green); text-decoration: none; font-weight: bold; }
-        .section-box a:hover { text-decoration: underline; color: #94e2d5; }
 
-        .delete-file-btn {
-            background: none; border: none; cursor: pointer;
-            color: var(--red); font-size: 1.1rem; padding: 0 4px;
-            transition: 0.2s;
-        }
-        .delete-file-btn:hover { color: #e64553; transform: scale(1.2); }
-
-        .history-item { color: #bac2de; font-size: 0.8rem !important; font-style: italic; }
-
-        .sidebar-btn {
-            background-color: #313244; color: white; border: none;
-            padding: 10px; margin-bottom: 10px; border-radius: 6px;
-            cursor: pointer; transition: 0.2s; font-weight: bold; font-size: 0.9rem;
-        }
-        .sidebar-btn:hover { background-color: var(--accent); color: #111; }
-        .btn-danger { background-color: var(--red); color: #111; margin-bottom: 0; }
-        .btn-danger:hover { background-color: #e64553; color: white; }
-
-        /* ── MAIN CHAT ── */
-        .main-chat {
-            flex-grow: 1;
-            display: flex;
-            flex-direction: column;
-            min-width: 0;
-        }
-        .chat-header {
-            padding: 14px 20px;
-            background-color: var(--sidebar-bg);
-            border-bottom: 1px solid #313244;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .menu-btn { background: none; border: none; color: var(--text-color); font-size: 1.4rem; cursor: pointer; }
-        .menu-btn:hover { color: var(--accent); }
-        .new-chat-btn {
-            background-color: transparent; border: 1px solid var(--accent);
-            color: var(--accent); padding: 7px 14px; border-radius: 5px;
-            cursor: pointer; transition: 0.2s; font-size: 0.9rem;
-        }
-        .new-chat-btn:hover { background-color: var(--accent); color: #111; }
-
-        /* ── MESSAGES ── */
-        .chat-history {
-            flex-grow: 1;
-            padding: 20px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 14px;
-        }
-        .message {
-            max-width: 78%;
-            padding: 13px 16px;
+        .logo-icon {
+            width: 36px; height: 36px;
+            background: linear-gradient(135deg, var(--accent), var(--purple));
             border-radius: 10px;
-            line-height: 1.6;
-            word-wrap: break-word;
-            font-size: 0.95rem;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.1rem; flex-shrink: 0;
         }
+
+        .logo-text { font-size: 0.8rem; font-weight: 600; letter-spacing: 0.1em;
+                     color: var(--text-muted); text-transform: uppercase; }
+
+        /* Files */
+        .section-label {
+            font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em; 
+            color: var(--text-muted); text-transform: uppercase;
+        }
+
+        .load-all-btn {
+            width: 100%; padding: 9px 12px;
+            background: var(--accent-dim); border: 1px solid #6c8ef540;
+            color: var(--accent); border-radius: 8px; cursor: pointer;
+            font-size: 0.82rem; font-weight: 500; font-family: 'Inter', sans-serif;
+            transition: all 0.2s; display: flex; align-items: center;
+            justify-content: center; gap: 6px;
+        }
+        .load-all-btn:hover { background: var(--accent); color: #0f0f13; border-color: var(--accent); }
+
+        .files-list-box {
+            flex: 1; overflow-y: auto;
+            background: var(--code-bg); border: 1px solid var(--border);
+            border-radius: 10px; padding: 6px; min-height: 80px;
+        }
+        .files-list-box::-webkit-scrollbar { width: 3px; }
+        .files-list-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        .files-empty { padding: 16px; text-align: center; color: var(--text-muted);
+                       font-size: 0.78rem; font-style: italic; }
+
+        .file-item {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 6px 8px; border-radius: 6px; transition: background 0.15s;
+        }
+        .file-item:hover { background: var(--panel-bg); }
+
+        .file-link {
+            color: var(--green); text-decoration: none;
+            font-size: 0.8rem; font-weight: 500;
+            display: flex; align-items: center; gap: 5px;
+        }
+        .file-link::before { content: '📄'; font-size: 0.72rem; }
+        .file-link:hover { color: #86efac; text-decoration: underline; }
+
+        .delete-btn {
+            background: none; border: none; color: var(--text-muted);
+            cursor: pointer; font-size: 0.9rem; padding: 2px 4px;
+            border-radius: 4px; transition: all 0.15s; line-height: 1;
+        }
+        .delete-btn:hover { color: var(--red); background: #f8717115; }
+
+        /* History */
+        .history-box {
+            flex: 1; overflow-y: auto;
+            background: var(--code-bg); border: 1px solid var(--border);
+            border-radius: 10px; padding: 6px; min-height: 60px;
+        }
+        .history-box::-webkit-scrollbar { width: 3px; }
+        .history-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        .history-item {
+            padding: 5px 8px; border-radius: 5px;
+            color: var(--text-muted); font-size: 0.78rem;
+            font-style: italic; border-bottom: 1px solid var(--border);
+            word-break: break-word;
+        }
+        .history-item:last-child { border-bottom: none; }
+
+        .clear-btn {
+            width: 100%; padding: 9px 12px;
+            background: transparent; border: 1px solid var(--border);
+            color: var(--text-muted); border-radius: 8px; cursor: pointer;
+            font-size: 0.82rem; font-weight: 500; font-family: 'Inter', sans-serif;
+            transition: all 0.2s; display: flex; align-items: center;
+            justify-content: center; gap: 6px;
+        }
+        .clear-btn:hover { border-color: var(--red); color: var(--red); background: #f8717110; }
+
+        /* ══════════════════════════════════
+           MAIN CHAT
+        ══════════════════════════════════ */
+        .main-chat {
+            flex: 1; display: flex; flex-direction: column;
+            min-width: 0; background: var(--bg);
+        }
+
+        .chat-header {
+            padding: 13px 20px;
+            background: var(--sidebar-bg);
+            border-bottom: 1px solid var(--border);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+
+        .header-left { display: flex; align-items: center; gap: 10px; }
+
+        .menu-btn {
+            background: none; border: none; color: var(--text-muted);
+            font-size: 1.2rem; cursor: pointer; padding: 5px;
+            border-radius: 6px; transition: all 0.15s; line-height: 1;
+        }
+        .menu-btn:hover { color: var(--text); background: var(--panel-bg); }
+
+        .header-info .title { font-size: 0.9rem; font-weight: 600; }
+        .header-info .status {
+            font-size: 0.72rem; color: var(--text-muted);
+            display: flex; align-items: center; gap: 5px; margin-top: 2px;
+        }
+
+        .status-dot {
+            width: 6px; height: 6px; background: var(--green);
+            border-radius: 50%; box-shadow: 0 0 5px var(--green);
+            animation: pulse-dot 2s infinite;
+        }
+        @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+        .new-chat-btn {
+            background: transparent; border: 1px solid var(--border);
+            color: var(--text-muted); padding: 7px 13px;
+            border-radius: 7px; cursor: pointer; font-size: 0.82rem;
+            font-weight: 500; font-family: 'Inter', sans-serif;
+            transition: all 0.2s; display: flex; align-items: center; gap: 5px;
+        }
+        .new-chat-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+        /* ══════════════════════════════════
+           MESSAGES
+        ══════════════════════════════════ */
+        .chat-history {
+            flex: 1; padding: 22px; overflow-y: auto;
+            display: flex; flex-direction: column; gap: 14px;
+        }
+        .chat-history::-webkit-scrollbar { width: 4px; }
+        .chat-history::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        .message {
+            max-width: 78%; padding: 13px 16px; border-radius: 12px;
+            line-height: 1.65; word-wrap: break-word; font-size: 0.9rem;
+            border: 1px solid var(--border);
+            animation: msg-in 0.2s ease;
+        }
+        @keyframes msg-in { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:translateY(0)} }
+
         .user-message {
-            background-color: var(--user-msg);
-            align-self: flex-end;
-            border-bottom-right-radius: 2px;
+            background: var(--user-msg); align-self: flex-end;
+            border-bottom-right-radius: 3px;
         }
         .ai-message {
-            background-color: var(--ai-msg);
-            align-self: flex-start;
-            border-bottom-left-radius: 2px;
+            background: var(--ai-msg); align-self: flex-start;
+            border-bottom-left-radius: 3px;
         }
 
-        /* ── MARKDOWN ΣΤΥΛ ΜΕΣΑ ΣΤΑ BUBBLES ── */
+        /* Markdown */
         .ai-message p  { margin: 0 0 8px 0; }
         .ai-message p:last-child { margin-bottom: 0; }
-        .ai-message strong { color: var(--yellow); }
-        .ai-message em { color: #cba6f7; }
+        .ai-message strong { color: var(--yellow); font-weight: 600; }
+        .ai-message em { color: var(--purple); }
 
-        /* Code blocks */
         .ai-message pre {
-            background-color: var(--code-bg);
-            border: 1px solid #313244;
-            border-radius: 8px;
-            padding: 14px 16px;
-            overflow-x: auto;
-            margin: 10px 0;
+            background: var(--code-bg); border: 1px solid var(--border);
+            border-radius: 8px; padding: 13px 15px;
+            overflow-x: auto; margin: 10px 0;
         }
         .ai-message pre code {
-            font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-            font-size: 0.88rem;
-            line-height: 1.6;
-            background: none;
-            padding: 0;
-            border-radius: 0;
-            /* Κάθε SQL keyword σε νέα γραμμή — το LLM στέλνει \n, το pre το κρατάει */
-            white-space: pre;
+            font-family: 'JetBrains Mono', 'Cascadia Code', monospace;
+            font-size: 0.83rem; line-height: 1.6;
+            background: none; padding: 0; white-space: pre;
         }
-
-        /* Inline code */
         .ai-message code:not(pre code) {
-            background-color: var(--code-bg);
-            color: var(--green);
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-            font-size: 0.87rem;
+            background: var(--code-bg); color: var(--green);
+            padding: 2px 6px; border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.83rem; border: 1px solid var(--border);
         }
-
-        /* Λίστες */
-        .ai-message ul, .ai-message ol {
-            margin: 6px 0 8px 0;
-            padding-left: 20px;
-        }
+        .ai-message ul, .ai-message ol { margin: 6px 0 8px 20px; }
         .ai-message li { margin-bottom: 3px; }
 
-        /* Πηγή — χρωματισμός της γραμμής "Πηγή: ..." */
-        .ai-message .source-line {
-            margin-top: 10px;
-            padding-top: 8px;
-            border-top: 1px solid #585b70;
-            color: #a6adc8;
-            font-size: 0.82rem;
+        .source-line {
+            margin-top: 10px; padding-top: 8px;
+            border-top: 1px solid var(--border);
+            color: var(--text-muted); font-size: 0.78rem;
+            display: flex; align-items: center; gap: 5px;
         }
+        .source-line::before { content: '📎'; font-size: 0.72rem; }
 
-        /* Voice badge */
         .voice-badge {
-            display: inline-block;
-            font-size: 0.7rem;
-            background-color: var(--yellow);
-            color: #111;
-            border-radius: 4px;
-            padding: 1px 6px;
-            margin-right: 6px;
-            font-weight: bold;
-            vertical-align: middle;
+            display: inline-flex; align-items: center; gap: 3px;
+            font-size: 0.68rem; background: #fbbf2420;
+            color: var(--yellow); border: 1px solid #fbbf2440;
+            border-radius: 4px; padding: 1px 6px;
+            margin-right: 6px; font-weight: 600;
         }
 
-        /* ── INPUT AREA ── */
+        /* ══════════════════════════════════
+           INPUT AREA
+        ══════════════════════════════════ */
         .input-area {
-            padding: 16px 20px;
-            background-color: var(--sidebar-bg);
-            display: flex;
-            gap: 10px;
-            align-items: center;
-            border-top: 1px solid #313244;
+            padding: 14px 20px; background: var(--sidebar-bg);
+            border-top: 1px solid var(--border);
+            display: flex; gap: 8px; align-items: center;
         }
-        input[type="text"] {
-            flex-grow: 1; padding: 13px 16px; border-radius: 8px;
-            border: 1px solid #45475a; background-color: var(--code-bg);
-            color: white; font-size: 0.95rem; outline: none;
+
+        .text-input {
+            flex: 1; padding: 12px 15px; border-radius: 10px;
+            border: 1px solid var(--border); background: var(--code-bg);
+            color: var(--text); font-size: 0.9rem;
+            font-family: 'Inter', sans-serif; outline: none;
+            transition: border-color 0.2s;
         }
-        input[type="text"]:focus { border-color: var(--accent); }
+        .text-input::placeholder { color: var(--text-muted); }
+        .text-input:focus { border-color: var(--accent); }
 
-        .action-btn {
-            padding: 13px 22px; border-radius: 8px; border: none;
-            font-size: 0.95rem; cursor: pointer; font-weight: bold; transition: 0.2s;
+        .send-btn {
+            padding: 12px 18px; background: var(--accent); color: #0f0f13;
+            border: none; border-radius: 10px; cursor: pointer;
+            font-size: 0.88rem; font-weight: 600;
+            font-family: 'Inter', sans-serif;
+            transition: all 0.2s;
+            display: flex; align-items: center; gap: 5px;
         }
-        .send-btn { background-color: var(--accent); color: #111; }
-        .send-btn:hover { background-color: #b4befe; }
-        .mic-btn { background-color: var(--yellow); color: #111; font-size: 1.1rem; padding: 13px 18px; }
-        .mic-btn:hover { background-color: var(--red); }
-        .mic-btn.listening { background-color: var(--red); animation: pulse 1s infinite; }
+        .send-btn:hover { background: #8aa4f7; transform: translateY(-1px); }
+        .send-btn:active { transform: translateY(0); }
 
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+        .mic-btn {
+            padding: 12px 13px; background: var(--panel-bg);
+            border: 1px solid var(--border); color: var(--text-muted);
+            border-radius: 10px; cursor: pointer; font-size: 1rem;
+            transition: all 0.2s;
+        }
+        .mic-btn:hover { border-color: var(--yellow); color: var(--yellow); }
+        .mic-btn.listening {
+            background: #f8717120; border-color: var(--red); color: var(--red);
+            animation: pulse-mic 1s infinite;
+        }
+        @keyframes pulse-mic {
+            0%,100%{ box-shadow: 0 0 0 0 #f8717140; }
+            50%{ box-shadow: 0 0 0 6px transparent; }
+        }
 
+        /* Loading */
         #loading {
-            display: none; text-align: center;
-            color: var(--accent); font-size: 0.85rem;
-            font-style: italic; padding: 6px 0;
+            display: none; align-items: center; justify-content: center;
+            gap: 8px; padding: 6px 0;
         }
+        #loading.visible { display: flex; }
+
+        .dot { width: 5px; height: 5px; background: var(--accent); border-radius: 50%;
+               animation: dot-bounce 1.2s infinite; display: inline-block; }
+        .dot:nth-child(2) { animation-delay: 0.2s; }
+        .dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes dot-bounce {
+            0%,80%,100%{ transform:translateY(0); opacity:0.4; }
+            40%{ transform:translateY(-5px); opacity:1; }
+        }
+        .loading-text { color: var(--text-muted); font-size: 0.8rem; }
     </style>
 </head>
 <body>
 
+<!-- ══ SIDEBAR ══ -->
 <div class="sidebar" id="sidebar">
-    <h2>ΦΟΡΤΩΜΕΝΑ ΑΡΧΕΙΑ</h2>
-    <button class="sidebar-btn" onclick="sendCommand('διάβασε όλα τα αρχεία')">Φόρτωση Όλης της Βάσης</button>
-    <div class="section-box" style="flex-grow:0.5;">
-        <ul id="loaded-files-list">
-            <li style="color:gray;display:block;">Η μνήμη είναι άδεια.</li>
-        </ul>
+    <div class="sidebar-logo">
+        <div class="logo-icon">🤖</div>
+        <span class="logo-text">Local AI</span>
     </div>
-    <button class="sidebar-btn btn-danger" onclick="sendCommand('καθάρισε τη μνήμη')">Άδειασμα Μνήμης</button>
 
-    <h2 style="margin-top:20px;">ΙΣΤΟΡΙΚΟ ΕΡΩΤΗΣΕΩΝ</h2>
-    <div class="section-box">
-        <ul id="session-history-list">
-            <li style="color:gray;display:block;">Δεν υπάρχουν ερωτήσεις ακόμα.</li>
-        </ul>
+    <div class="section-label">Φορτωμένα Αρχεία</div>
+
+    <button class="load-all-btn" onclick="sendCommand('διάβασε όλα τα αρχεία')">
+        ⬆ Φόρτωση Όλης της Βάσης
+    </button>
+
+    <div class="files-list-box" id="loaded-files-list">
+        <div class="files-empty">Η μνήμη είναι άδεια.</div>
     </div>
+
+    <button class="clear-btn" onclick="sendCommand('καθάρισε τη μνήμη')">
+         Άδειασμα Μνήμης
+    </button>
+
+
 </div>
 
+<!-- ══ MAIN CHAT ══ -->
 <div class="main-chat">
     <div class="chat-header">
-        <button class="menu-btn" onclick="toggleSidebar()">☰</button>
-        <button class="new-chat-btn" onclick="startNewChat()">+ Νέα Συνομιλία</button>
+        <div class="header-left">
+            <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+            <div class="header-info">
+                <div class="title">AI Βοηθός</div>
+                <div class="status">
+                    <span class="status-dot"></span> Συνδεδεμένο
+                </div>
+            </div>
+        </div>
+        <button class="new-chat-btn" onclick="startNewChat()">✦ Νέα Συνομιλία</button>
     </div>
 
     <div class="chat-history" id="chat-history">
         <div class="message ai-message">Γεια σου! Είμαι ο προσωπικός σου AI βοηθός. Πώς μπορώ να βοηθήσω;</div>
     </div>
 
-    <div id="loading">Το AI σκέφτεται...</div>
+    <div id="loading">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="loading-text">Το AI σκέφτεται...</span>
+    </div>
 
     <div class="input-area">
-        <button class="action-btn mic-btn" id="mic-btn" onclick="startVoice()" title="Μίλησε στο μικρόφωνο">🎤</button>
-        <input type="text" id="user-input" placeholder="Γράψε την ερώτηση ή την εντολή σου..." onkeypress="handleEnter(event)">
-        <button class="action-btn send-btn" onclick="sendText()">Αποστολή</button>
+        <button class="mic-btn" id="mic-btn" onclick="startVoice()" title="Φωνητική εισαγωγή">🎤</button>
+        <input class="text-input" type="text" id="user-input"
+               placeholder="Γράψε την ερώτηση ή εντολή σου..."
+               onkeypress="handleEnter(event)">
+        <button class="send-btn" onclick="sendText()">Αποστολή ➤</button>
     </div>
 </div>
 
 <script>
-    // ── Αναφορές DOM ──
-    const chatHistory  = document.getElementById('chat-history');
-    const userInput    = document.getElementById('user-input');
-    const loading      = document.getElementById('loading');
-    const fileList     = document.getElementById('loaded-files-list');
-    const historyList  = document.getElementById('session-history-list');
-    const sidebar      = document.getElementById('sidebar');
-    const micBtn       = document.getElementById('mic-btn');
+    const chatEl     = document.getElementById('chat-history');
+    const inputEl    = document.getElementById('user-input');
+    const loadingEl  = document.getElementById('loading');
+    const filesEl    = document.getElementById('loaded-files-list');
+    const sidebarEl  = document.getElementById('sidebar');
+    const micBtn     = document.getElementById('mic-btn');
 
     let questionCount = 0;
 
-    // ── Ρύθμιση marked.js ──
-    marked.setOptions({
-        breaks: true,       // \n → <br> μέσα σε παραγράφους
-        gfm:    true        // GitHub-flavored markdown (code blocks, tables)
-    });
+    marked.setOptions({ breaks: true, gfm: true });
 
-    // ── Sidebar toggle ──
-    function toggleSidebar() {
-        sidebar.classList.toggle('hidden');
-    }
+    function toggleSidebar() { sidebarEl.classList.toggle('hidden'); }
 
-    // ── Προσθήκη μηνύματος στο chat ──
+    // ── Προσθήκη μηνύματος ──
     function appendMessage(text, sender, isVoice = false) {
         const div = document.createElement('div');
         div.className = `message ${sender}-message`;
 
         if (sender === 'user') {
-            // Μηνύματα χρήστη: plain text (με voice badge αν χρειάζεται)
             if (isVoice) {
                 const badge = document.createElement('span');
                 badge.className = 'voice-badge';
@@ -331,17 +421,12 @@
             }
             div.appendChild(document.createTextNode(text));
         } else {
-            // Μηνύματα AI: render markdown
-            // Χρωματίζουμε τη γραμμή "Πηγή: ..." με ειδικό div
-            const sourceRe = /\n?(Πηγή:\s*.+)$/i;
-            const sourceMatch = text.match(sourceRe);
-            let mainText = text;
-            let sourceLine = '';
-
-            if (sourceMatch) {
-                mainText   = text.replace(sourceRe, '').trimEnd();
-                sourceLine = sourceMatch[1];
-            }
+            // Ξεχωρίζουμε τη γραμμή Πηγή για ειδική μορφοποίηση
+            const allSources = [...text.matchAll(/Πηγή:\s*.+/gi)];
+            const sourceLine = allSources.length
+                ? allSources[allSources.length - 1][0]
+                : '';
+            const mainText = text.replace(/\n?Πηγή:\s*.+/gi, '').trimEnd();
 
             div.innerHTML = marked.parse(mainText);
 
@@ -352,46 +437,39 @@
                 div.appendChild(srcDiv);
             }
 
-            // Syntax highlighting σε όλα τα code blocks
-            div.querySelectorAll('pre code').forEach(block => {
-                hljs.highlightElement(block);
-            });
+            div.querySelectorAll('pre code').forEach(b => hljs.highlightElement(b));
         }
 
-        chatHistory.appendChild(div);
-        chatHistory.scrollTop = chatHistory.scrollHeight;
-
-        // Αποθήκευση στο sidebar ιστορικό
-        const hidden = ['διάβασε όλα', 'καθάρισε', 'διέγραψε το αρχείο'];
-        if (sender === 'user' && !hidden.some(c => text.startsWith(c))) {
-            if (questionCount === 0) historyList.innerHTML = '';
-            const li = document.createElement('li');
-            li.className = 'history-item';
-            li.textContent = (isVoice ? '🎤 ' : '') + text;
-            historyList.appendChild(li);
-            questionCount++;
-        }
+        chatEl.appendChild(div);
+        chatEl.scrollTop = chatEl.scrollHeight;
     }
 
-    // ── Ενημέρωση λίστας αρχείων ──
+    // ── Λίστα αρχείων ──
     function updateFileList(files) {
-        fileList.innerHTML = '';
+        filesEl.innerHTML = '';
         if (files.length === 0) {
-            fileList.innerHTML = '<li style="color:gray;display:block;">Η μνήμη είναι άδεια.</li>';
+            filesEl.innerHTML = '<div class="files-empty">Η μνήμη είναι άδεια.</div>';
             return;
         }
         files.forEach(file => {
-            const li        = document.createElement('li');
-            const linkSpan  = document.createElement('span');
-            linkSpan.innerHTML = `<a href="/pdf/${file}" target="_blank">${file}</a>`;
-            const deleteBtn = document.createElement('button');
-            deleteBtn.innerHTML   = '&times;';
-            deleteBtn.className   = 'delete-file-btn';
-            deleteBtn.title       = 'Αφαίρεση από μνήμη';
-            deleteBtn.onclick     = () => sendCommand('διέγραψε το αρχείο ' + file);
-            li.appendChild(linkSpan);
-            li.appendChild(deleteBtn);
-            fileList.appendChild(li);
+            const item = document.createElement('div');
+            item.className = 'file-item';
+
+            const link = document.createElement('a');
+            link.href = `/pdf/${file}`;
+            link.target = '_blank';
+            link.className = 'file-link';
+            link.textContent = file;
+
+            const del = document.createElement('button');
+            del.innerHTML = '×';
+            del.className = 'delete-btn';
+            del.title = 'Αφαίρεση';
+            del.onclick = () => sendCommand('διέγραψε το αρχείο ' + file);
+
+            item.appendChild(link);
+            item.appendChild(del);
+            filesEl.appendChild(item);
         });
     }
 
@@ -399,56 +477,50 @@
     async function startNewChat() {
         try {
             await fetch('/new_chat', { method: 'POST' });
-            chatHistory.innerHTML  = '<div class="message ai-message">Γεια σου! Η μνήμη καθαρίστηκε. Είμαι έτοιμος για νέα ερωτήματα!</div>';
-            historyList.innerHTML  = '<li style="color:gray;display:block;">Δεν υπάρχουν ερωτήσεις ακόμα.</li>';
+            chatEl.innerHTML = '<div class="message ai-message">Γεια σου! Η μνήμη καθαρίστηκε. Είμαι έτοιμος για νέα ερωτήματα!</div>';
             questionCount = 0;
-        } catch(e) { console.error('Σφάλμα Νέας Συνομιλίας', e); }
+        } catch(e) { console.error(e); }
     }
 
-    // ── Κύρια συνάρτηση αποστολής ──
+    // ── Κύρια αποστολή ──
     async function processRequest(text, isVoice = false) {
         if (!text && !isVoice) return;
 
         const hidden = ['διέγραψε το αρχείο'];
         if (text && !hidden.some(c => text.startsWith(c))) {
             appendMessage(text, 'user', false);
-            userInput.value = '';
+            inputEl.value = '';
         }
 
-        if (isVoice) {
-            micBtn.classList.add('listening');
-            micBtn.textContent = '⏹';
-        }
-        loading.style.display = 'block';
+        if (isVoice) { micBtn.classList.add('listening'); micBtn.textContent = '⏹'; }
+        loadingEl.classList.add('visible');
 
         try {
             const res  = await fetch('/chat', {
-                method:  'POST',
+                method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ text, is_voice: isVoice })
+                body: JSON.stringify({ text, is_voice: isVoice })
             });
             const data = await res.json();
 
-            if (data.user_text_from_voice) {
+            if (data.user_text_from_voice)
                 appendMessage(data.user_text_from_voice, 'user', true);
-            }
 
-            if (!text || !hidden.some(c => text.startsWith(c))) {
+            if (!text || !hidden.some(c => text.startsWith(c)))
                 appendMessage(data.reply, 'ai');
-            }
 
             updateFileList(data.loaded_files);
 
         } catch(err) {
             appendMessage('Σφάλμα επικοινωνίας με τον Server.', 'ai');
         } finally {
-            loading.style.display = 'none';
+            loadingEl.classList.remove('visible');
             micBtn.classList.remove('listening');
             micBtn.textContent = '🎤';
         }
     }
 
-    function sendText()       { processRequest(userInput.value.trim()); }
+    function sendText()       { processRequest(inputEl.value.trim()); }
     function sendCommand(cmd) { processRequest(cmd); }
     function startVoice()     { processRequest('', true); }
     function handleEnter(e)   { if (e.key === 'Enter') sendText(); }
