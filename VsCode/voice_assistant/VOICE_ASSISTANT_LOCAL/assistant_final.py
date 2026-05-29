@@ -101,10 +101,11 @@ def load_all_database_pdfs():
 def get_filename_from_input(user_input):
     # Πρώτα: ακριβές match με φορτωμένα αρχεία
     greek_to_latin = {"βάσεις": "baseis", "βασεις": "baseis", "βάση": "baseis", "βαση": "baseis"}
+    
     for greek, latin in greek_to_latin.items():
         if greek in user_input.lower():
             user_input = user_input.lower().replace(greek, latin)
-        break
+            break
 
     for fname in loaded_pdfs.keys():
         if fname.lower() in user_input.lower():
@@ -179,19 +180,21 @@ def check_topic_in_single_file(question: str, filename: str, text: str) -> bool:
 def answer_from_single_file(question: str, filename: str, text: str) -> str:
     """Πλήρης απάντηση από ΕΝΑ αρχείο."""
     system_content = (
-        f"Είσαι αναλυτής εγγράφων. Χρησιμοποιείς ΑΠΟΚΛΕΙΣΤΙΚΑ το αρχείο: {filename}.\n\n"
-        f"ΚΑΝΟΝΕΣ:\n"
-            f"ΜΟΡΦΗ ΑΠΑΝΤΗΣΗΣ (ακολούθησε αυτή ακριβώς):\n"
-            f"1. 2-4 γραμμές θεωρία με δικά σου λόγια — μόνο ό,τι αφορά την ερώτηση.\n"
-            f"2. Αν υπάρχει παράδειγμα κώδικα στο κείμενο: γράψε το σε ```sql``` block "
-            f"   ΑΚΡΙΒΩΣ όπως είναι, με κάθε clause σε νέα γραμμή.\n"
-            f"3. Αν δεν υπάρχει παράδειγμα, παράλειψε εντελώς το βήμα 2.\n"
-            f"4. ΤΕΛΕΥΤΑΙΑ γραμμή ΠΑΝΤΑ: 'Πηγή: {filename}' — ΜΟΝΟ ΜΙΑ ΦΟΡΑ.\n"
-            f"ΑΠΑΓΟΡΕΥΕΤΑΙ: εξωτερική γνώση, επινοημένα παραδείγματα, επανάληψη 'Πηγή:'.\n"
+        f"You are a document analyst. Use ONLY file: {filename}.\n\n"
+        f"ANSWER FORMAT (follow exactly):\n"
+        f"1. 2-4 lines of theory in your own words — only what the question asks.\n"
+        f"2. If there is a code example IN THE TEXT: write it in ```sql``` block EXACTLY as it appears.\n"
+        f"3. If no code example exists, skip step 2 entirely.\n"
+        f"4. One short explanation line after the code (or after theory if no code).\n"
+        f"5. LAST LINE ALWAYS: 'Πηγή: {filename}'\n\n"
+        f"FORBIDDEN: external knowledge, invented examples, repeating 'Πηγή:'.\n"
+        f"Answer in Greek.\n\n"
+        f"TEXT:\n\"\"\"\n{text}\n\"\"\""
     )
-    messages = [{"role": "system", "content": system_content}]
+    messages = [{"role": "system", "content": system_content},
+                {"role": "user", "content": question}]
     recent = [m for m in conversation_history if m["role"] != "system"][-4:]
-    messages.extend(recent)
+    messages[1:1] = recent  # βάζει το history ΠΡΙΝ την ερώτηση
     return call_ollama(messages)
 
 
@@ -245,25 +248,26 @@ def perform_task(user_request: str, context_files: dict) -> str:
     num_match = re.search(r'\d+', user_request)
     num_q = int(num_match.group()) if num_match else 4
 
-    # # για πολλαπλησ αλλαγη- ελεγχοσ αν επηρεαζει μετα τισ υπολοιπεσ ερωτησεισ!!!!
-    # # Για γενικές ερωτήσεις: παίρνουμε num_q τυχαία αρχεία
-    # import random
-    # sample_size = min(num_q, len(context_files))
-    # sampled = dict(random.sample(list(context_files.items()), sample_size))
-    # relevant_files = sampled
+    import random
+    GENERIC_KEYWORDS = ["πολλαπλής", "πολλαπλης", "quiz", "τεστ", "ερωτήσεις",
+                        "ερωτησεις", "κάνε μου", "κανε μου", "φτιάξε", "φτιαξε"]
+    is_generic = "πολλαπλ" in user_request.lower() and \
+                 not any(w for w in user_request.lower().split()
+                         if len(w) > 4 and w not in GENERIC_KEYWORDS)
 
-    
-    # Βήμα 1: βρες ποια αρχεία έχουν σχετικό υλικό (pre-check)
-    relevant_files = {}
-    for filename, text in context_files.items():
-        if check_topic_in_single_file(user_request, filename, text):
-            relevant_files[filename] = text
-        if len(relevant_files) >= num_q:
-            break
-
-    # Αν δεν βρέθηκε τίποτα, χρησιμοποίησε όλα
-    if not relevant_files:
-        relevant_files = dict(list(context_files.items())[:4])
+    if is_generic:
+        sample_size = min(num_q, len(context_files))
+        relevant_files = dict(random.sample(list(context_files.items()), sample_size))
+    else:
+        relevant_files = {}
+        for filename, text in context_files.items():
+            if check_topic_in_single_file(user_request, filename, text):
+                relevant_files[filename] = text
+            if len(relevant_files) >= num_q:
+                break
+        if not relevant_files:
+            sample_size = min(num_q, len(context_files))
+            relevant_files = dict(random.sample(list(context_files.items()), sample_size))
 
     sources = ", ".join(relevant_files.keys())
     combined = "\n\n".join(
@@ -291,10 +295,10 @@ def perform_task(user_request: str, context_files: dict) -> str:
         f"MATERIAL:\n\"\"\"\n{combined}\n\"\"\""
     )
 
-    messages = [
-        {"role": "system", "content": system_content},
-        {"role": "user",   "content": f"Φτιάξε {num_q} ερωτήσεις πολλαπλής επιλογής."}
-    ]
+    messages = [{"role": "system", "content": system_content}]
+    recent = [m for m in conversation_history if m["role"] != "system"][-4:]
+    messages.extend(recent)
+    messages.append({"role": "user", "content": f"Φτιάξε {num_q} ερωτήσεις πολλαπλής επιλογής."})
     return call_ollama(messages)
 
 def chat_general(user_text):
@@ -356,7 +360,7 @@ def process_request():
     conversation_history.append({"role": "user", "content": user_input})
     trim_history()
 
-     # ── Ορθογραφικός έλεγχος ──
+    # ── Ορθογραφικός έλεγχος ──
     KNOWN_COMMANDS = [
         "διάβασε", "διαβασε", "φόρτωσε", "φορτωσε",
         "βγάλε", "βγαλε", "διέγραψε", "διεγραψε",
@@ -424,6 +428,7 @@ def process_request():
     elif any(w in user_input for w in ["βγάλε", "βγαλε", "αφαίρεσε", "αφαιρεσε",
                                         "διέγραψε", "διεγραψε", "σβήσε", "σβησε",
                                         "διάγραψε", "διαγραψε"]):
+        
         fname = get_filename_from_input(user_input)
         # Αν δεν βρέθηκε όνομα αρχείου στο κείμενο, χρησιμοποιούμε το τελευταίο ενεργό
         if not fname:
