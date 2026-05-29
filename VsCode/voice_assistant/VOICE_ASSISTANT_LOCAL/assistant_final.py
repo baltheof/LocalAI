@@ -1,3 +1,4 @@
+import random
 from flask import Flask, request, jsonify, render_template, send_from_directory
 import speech_recognition as sr
 import os
@@ -107,7 +108,7 @@ def get_filename_from_input(user_input):
             user_input = user_input.lower().replace(greek, latin)
             break
 
-    for fname in loaded_pdfs.keys():
+    for fname in sorted(loaded_pdfs.keys(), key=len, reverse=True):
         if fname.lower() in user_input.lower():
             return fname
 
@@ -178,23 +179,25 @@ def check_topic_in_single_file(question: str, filename: str, text: str) -> bool:
 
 
 def answer_from_single_file(question: str, filename: str, text: str) -> str:
-    """Πλήρης απάντηση από ΕΝΑ αρχείο."""
     system_content = (
-        f"You are a document analyst. Use ONLY file: {filename}.\n\n"
-        f"ANSWER FORMAT (follow exactly):\n"
-        f"1. 2-4 lines of theory in your own words — only what the question asks.\n"
-        f"2. If there is a code example IN THE TEXT: write it in ```sql``` block EXACTLY as it appears.\n"
-        f"3. If no code example exists, skip step 2 entirely.\n"
-        f"4. One short explanation line after the code (or after theory if no code).\n"
-        f"5. LAST LINE ALWAYS: 'Πηγή: {filename}'\n\n"
-        f"FORBIDDEN: external knowledge, invented examples, repeating 'Πηγή:'.\n"
-        f"Answer in Greek.\n\n"
-        f"TEXT:\n\"\"\"\n{text}\n\"\"\""
+        f"You are a document analyst. Use ONLY the file: {filename}.\n\n"
+        f"ANSWER FORMAT (follow EXACTLY, in Greek):\n"
+        f"1. THEORY: 2-4 lines explaining the topic in your own words.\n"
+        f"2. CODE EXAMPLE: ONLY if one exists in the text below — copy it EXACTLY in a ```sql``` block.\n"
+        f"   If no code exists in the text, skip this step entirely.\n"
+        f"3. EXPLANATION: One short sentence explaining the example (or the theory if no code).\n"
+        f"4. SOURCE: Last line must be exactly: Πηγή: {filename}\n\n"
+        f"STRICT RULES:\n"
+        f"- Do NOT repeat the answer.\n"
+        f"- Do NOT invent code or examples.\n"
+        f"- Do NOT use external knowledge.\n"
+        f"- Answer ONCE, in Greek.\n\n"
+        f"TEXT FROM {filename}:\n\"\"\"\n{text}\n\"\"\""
     )
-    messages = [{"role": "system", "content": system_content},
-                {"role": "user", "content": question}]
     recent = [m for m in conversation_history if m["role"] != "system"][-4:]
-    messages[1:1] = recent  # βάζει το history ΠΡΙΝ την ερώτηση
+    messages = [{"role": "system", "content": system_content}]
+    messages.extend(recent)
+    messages.append({"role": "user", "content": question})
     return call_ollama(messages)
 
 
@@ -251,9 +254,15 @@ def perform_task(user_request: str, context_files: dict) -> str:
     import random
     GENERIC_KEYWORDS = ["πολλαπλής", "πολλαπλης", "quiz", "τεστ", "ερωτήσεις",
                         "ερωτησεις", "κάνε μου", "κανε μου", "φτιάξε", "φτιαξε"]
-    is_generic = "πολλαπλ" in user_request.lower() and \
-                 not any(w for w in user_request.lower().split()
-                         if len(w) > 4 and w not in GENERIC_KEYWORDS)
+    
+    is_generic = (
+        "πολλαπλ" in user_request.lower() or
+        "διαφορ" in user_request.lower()
+    ) and not any(
+        w for w in user_request.lower().split()
+        if len(w) > 4 and w not in GENERIC_KEYWORDS
+        and not any(x in w for x in ["αρχει", "βασ", "bas"])
+    )
 
     if is_generic:
         sample_size = min(num_q, len(context_files))
@@ -284,7 +293,7 @@ def perform_task(user_request: str, context_files: dict) -> str:
         f"Γ) [επιλογή]\n"
         f"Δ) [επιλογή]\n"
         f"✅ Σωστή: [γράμμα]) [κείμενο σωστής] — [σύντομη εξήγηση]\n"
-        f"📚 Πηγή: [exact filename, e.g. baseis7]\n\n"
+        f"📚 Πηγή: [γράψε ΑΚΡΙΒΩΣ το όνομα του αρχείου από το ΥΛΙΚΟ, π.χ. baseis7 ή baseis12]\n\n"
         f"RULES:\n"
         f"- ALWAYS 4 options Α/Β/Γ/Δ per question.\n"
         f"- NEVER write 'Απάντηση:' — ONLY ✅ Σωστή:\n"
