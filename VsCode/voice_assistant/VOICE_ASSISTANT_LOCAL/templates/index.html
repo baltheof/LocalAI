@@ -311,6 +311,16 @@
             background: #f8717120; border-color: var(--red); color: var(--red);
             animation: pulse-mic 1s infinite;
         }
+
+        .stop-btn {
+            padding: 12px 13px; background: var(--panel-bg);
+            border: 1px solid var(--border); color: var(--text-muted);
+            border-radius: 10px; cursor: pointer; font-size: 1rem;
+            transition: all 0.2s; display: none;
+        }
+        .stop-btn.visible { display: block; }
+        .stop-btn:hover { border-color: var(--red); color: var(--red); background: #f8717110; }     
+
         @keyframes pulse-mic {
             0%,100%{ box-shadow: 0 0 0 0 #f8717140; }
             50%{ box-shadow: 0 0 0 6px transparent; }
@@ -385,12 +395,13 @@
     </div>
 
     <div class="input-area">
-        <button class="mic-btn" id="mic-btn" onclick="startVoice()" title="Φωνητική εισαγωγή">🎤</button>
-        <input class="text-input" type="text" id="user-input"
-               placeholder="Γράψε την ερώτηση ή εντολή σου..."
-               onkeypress="handleEnter(event)">
-        <button class="send-btn" onclick="sendText()">Αποστολή ➤</button>
-    </div>
+    <button class="mic-btn" id="mic-btn" onclick="startVoice()" title="Φωνητική εισαγωγή">🎤</button>
+    <input class="text-input" type="text" id="user-input"
+           placeholder="Γράψε την ερώτηση ή εντολή σου..."
+           onkeypress="handleEnter(event)">
+    <button class="stop-btn" id="stop-btn" onclick="stopRequest()" title="Διακοπή">⏹</button>
+    <button class="send-btn" onclick="sendText()">Αποστολή ➤</button>
+</div>
 </div>
 
 <script>
@@ -401,7 +412,6 @@
     const sidebarEl  = document.getElementById('sidebar');
     const micBtn     = document.getElementById('mic-btn');
 
-    let questionCount = 0;
 
     marked.setOptions({ breaks: true, gfm: true });
 
@@ -478,15 +488,30 @@
         try {
             await fetch('/new_chat', { method: 'POST' });
             chatEl.innerHTML = '<div class="message ai-message">Γεια σου! Η μνήμη καθαρίστηκε. Είμαι έτοιμος για νέα ερωτήματα!</div>';
-            questionCount = 0;
+            
         } catch(e) { console.error(e); }
     }
 
     // ── Κύρια αποστολή ──
+    let currentController = null;
+    const stopBtn = document.getElementById('stop-btn');
+
+    function stopRequest() {
+        if (currentController) {
+            currentController.abort();
+            currentController = null;
+        }
+        loadingEl.classList.remove('visible');
+        stopBtn.classList.remove('visible');
+        micBtn.classList.remove('listening');
+        micBtn.textContent = '🎤';
+        appendMessage('Η διαδικασία διακόπηκε.', 'ai');
+    }
+
     async function processRequest(text, isVoice = false) {
         if (!text && !isVoice) return;
 
-        const hidden = ['διέγραψε το αρχείο'];
+        const hidden = ['διέγραψε το αρχείο', 'βγάλε το αρχείο', 'αφαίρεσε το αρχείο', 'καθάρισε τη μνήμη', 'άδειασε όλα'];
         if (text && !hidden.some(c => text.startsWith(c))) {
             appendMessage(text, 'user', false);
             inputEl.value = '';
@@ -494,12 +519,15 @@
 
         if (isVoice) { micBtn.classList.add('listening'); micBtn.textContent = '⏹'; }
         loadingEl.classList.add('visible');
+        stopBtn.classList.add('visible');
+        currentController = new AbortController();
 
         try {
-            const res  = await fetch('/chat', {
+            const res = await fetch('/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text, is_voice: isVoice })
+                body: JSON.stringify({ text, is_voice: isVoice }),
+                signal: currentController.signal
             });
             const data = await res.json();
 
@@ -512,11 +540,14 @@
             updateFileList(data.loaded_files);
 
         } catch(err) {
-            appendMessage('Σφάλμα επικοινωνίας με τον Server.', 'ai');
+            if (err.name !== 'AbortError')
+                appendMessage('Σφάλμα επικοινωνίας με τον Server.', 'ai');
         } finally {
             loadingEl.classList.remove('visible');
+            stopBtn.classList.remove('visible');
             micBtn.classList.remove('listening');
             micBtn.textContent = '🎤';
+            currentController = null;
         }
     }
 

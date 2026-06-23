@@ -38,7 +38,6 @@ TASK_KEYWORDS = [
     "εξέταση", "εξεταση", "εξετάσεις", "εξετασεις",
     "flashcard", "flashcards",
     "σύνοψη", "συνοψη", "σύνοψε", "συνοψε",
-    "κάνε μου", "κανε μου",
     "φτιάξε", "φτιαξε",
     "δημιούργησε", "δημιουργησε",
     "δοκιμασία", "δοκιμασια",
@@ -177,7 +176,7 @@ def call_ollama(messages):
 def call_ollama_stream(messages):
     url = "http://localhost:11434/api/chat"
     payload = {
-        "model":   "llama3.1:8b",
+        "model": "llama3.1:8b-instruct-q4_K_M",
         "messages": messages,
         "stream":   True,
         "options":  {"temperature": 0.0, "num_ctx": 16384}
@@ -240,8 +239,14 @@ def answer_from_single_file(question: str, filename: str, text: str) -> str:
     messages.append({"role": "user", "content": question})
 
     result = call_ollama_stream(messages)
+
+    # Αν η απάντηση είναι μόνο κώδικας χωρίς θεωρία, ζήτα συμπλήρωση
+    if result.count("```") >= 2 and len(result.split("```")[0].strip()) < 50:
+        result = f"**Θεωρία:**\nΗ εντολή χρησιμοποιείται για την τροποποίηση δεδομένων σε πίνακα.\n\n**Παράδειγμα από το αρχείο:**\n" + result
+
     if f"Πηγή: {filename}" not in result:
         result = result.rstrip() + f"\n\nΠηγή: {filename}"
+
     return result
 
 
@@ -284,14 +289,18 @@ def answer_from_pdf(question: str, context_files: dict):
         for fn, txt in top_files.items()
     )
     system_content = (
-        f"Είσαι αναλυτής εγγράφων. Χρησιμοποιείς ΑΠΟΚΛΕΙΣΤΙΚΑ τα: {sources}.\n\n"
-        f"ΚΑΝΟΝΕΣ:\n"
-        f"1. Απάντησε οργανωμένα.\n"
-        f"2. Παραδείγματα κώδικα ΑΚΡΙΒΩΣ όπως στο κείμενο, σε markdown code block.\n"
-        f"3. ΑΠΑΓΟΡΕΥΕΤΑΙ η εφεύρεση στοιχείων που δεν υπάρχουν στο κείμενο.\n"
-        f"4. Στο ΤΕΛΟΣ: 'Πηγή: {sources}'\n\n"
-        f"ΚΕΙΜΕΝΟ:\n\"\"\"\n{combined_context}\n\"\"\""
-    )
+    f"Είσαι αναλυτής εγγράφων. Χρησιμοποιείς ΑΠΟΚΛΕΙΣΤΙΚΑ τα: {sources}.\n\n"
+    f"ΚΑΝΟΝΕΣ:\n"
+    f"1. Απάντησε οργανωμένα — ξεχώρισε τι λέει κάθε αρχείο.\n"
+    f"2. Κάθε παράδειγμα κώδικα να εμφανίζεται σε ```sql``` block — "
+    f"αντέγραψέ το ΑΥΤΟΥΣΙΩΣ από το αντίστοιχο === ΑΡΧΕΙΟ ===. "
+    f"ΑΠΑΓΟΡΕΥΕΤΑΙ να βάλεις κώδικα από ένα αρχείο με ετικέτα άλλου.\n"
+    f"3. Αν ένα αρχείο δεν έχει παράδειγμα γράψε: '[αρχείο]: δεν περιέχει παράδειγμα'.\n"
+    f"4. ΑΠΑΓΟΡΕΥΕΤΑΙ η εφεύρεση στοιχείων που δεν υπάρχουν στο κείμενο.\n"
+    f"5. Στο ΤΕΛΟΣ: 'Πηγή: {sources}'\n\n"
+    f"ΚΕΙΜΕΝΟ:\n\"\"\"\n{combined_context}\n\"\"\""
+)
+
     messages = [{"role": "system", "content": system_content}]
     recent = [m for m in conversation_history if m["role"] != "system"][-4:]
     messages.extend(recent)
@@ -316,8 +325,8 @@ def perform_task(user_request: str, context_files: dict) -> str:
     )
 
     if is_generic:
-        sample_size = min(num_q, len(context_files))
-        relevant_files = dict(random.sample(list(context_files.items()), sample_size))
+        # Παίρνουμε ΟΛΑ τα αρχεία, όχι τυχαίο δείγμα
+        relevant_files = context_files
     else:
         relevant_files = {}
         for filename, text in context_files.items():
@@ -336,32 +345,31 @@ def perform_task(user_request: str, context_files: dict) -> str:
     )
 
     system_content = (
-        f"Create EXACTLY {num_q} multiple choice questions from the material below.\n\n"
-        f"REQUIRED FORMAT — follow EXACTLY for each question:\n\n"
-        f"Ερώτηση 1: [ερώτηση;]\n"
-        f"Α) [επιλογή]\n"
-        f"Β) [επιλογή]\n"
-        f"Γ) [επιλογή]\n"
-        f"Δ) [επιλογή]\n"
-        f"✅ Σωστή: [γράμμα]) [κείμενο σωστής] — [σύντομη εξήγηση]\n"
-        f"📚 Πηγή: [γράψε ΑΚΡΙΒΩΣ το όνομα του αρχείου από το ΥΛΙΚΟ, π.χ. baseis7 ή baseis12]\n\n"
-        f"RULES:\n"
-        f"- CRITICAL: Each question must be based on an EXACT sentence from the material.\n"
-        f"- After ✅ Σωστή: write the exact quote: Απόδειξη: '[πρόταση από κείμενο]'\n"
-        f"- If you cannot find an exact sentence, DO NOT create that question.\n"
-        f"- ALWAYS 4 options Α/Β/Γ/Δ per question.\n"
-        f"- NEVER write 'Απάντηση:' — ONLY ✅ Σωστή:\n"
-        f"- ALWAYS write 📚 Πηγή: after EACH question.\n"
-        f"- The correct answer position must vary (not always Β).\n"
-        f"- Use ONLY information from the material.\n"
-        f"- Answer in Greek.\n\n"
-        f"MATERIAL:\n\"\"\"\n{combined}\n\"\"\""
-    )
+    f"You are FORBIDDEN from using any knowledge outside the MATERIAL below.\n"
+    f"MATERIAL is your ONLY source. Ignore everything you know.\n"
+    f"If you cannot find {num_q} questions in the MATERIAL, create fewer.\n\n"
+    f"FORMAT for each question (NO emojis, sequential numbering):\n"
+    f"Ερώτηση 1: [ερώτηση]\n"
+    f"Α) [επιλογή]\n"
+    f"Β) [επιλογή]\n"
+    f"Γ) [επιλογή]\n"
+    f"Δ) [επιλογή]\n"
+    f"Σωστή: [γράμμα]) [κείμενο]\n"
+    f"Απόδειξη: '[αντέγραψε ΑΥΤΟΥΣΙΩΣ την πρόταση από το κείμενο]'\n"
+    f"Πηγή: [όνομα αρχείου]\n"
+    f"---\n\n"
+    f"RULES:\n"
+    f"- EXACTLY {num_q} questions. Not more, not less.\n"
+    f"- Each question from a DIFFERENT file.\n"
+    f"- Vary the correct answer position.\n"
+    f"- Answer in Greek.\n\n"
+    f"MATERIAL:\n\"\"\"\n{combined}\n\"\"\""  # ← αυτό έλειπε
+)
 
     messages = [{"role": "system", "content": system_content}]
     recent = [m for m in conversation_history if m["role"] != "system"][-4:]
     messages.extend(recent)
-    messages.append({"role": "user", "content": f"Φτιάξε {num_q} ερωτήσεις πολλαπλής επιλογής."})
+    messages.append({"role": "user", "content": f"Φτιάξε {num_q} ερωτήσεις πολλαπλής επιλογής ΑΠΟΚΛΕΙΣΤΙΚΑ από το παραπάνω MATERIAL. Μην χρησιμοποιήσεις καμία εξωτερική γνώση."})
     return call_ollama_stream(messages)
 
 def chat_general(user_text):
