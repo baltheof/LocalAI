@@ -120,11 +120,14 @@ def get_filename_from_input(user_input):
 
     # Μετά στο filesystem αν δεν βρέθηκε στη μνήμη
     db_path = get_database_path()
-    if os.path.exists(db_path):
-        all_files = [f.replace('.pdf', '') for f in os.listdir(db_path) if f.endswith('.pdf')]
-        for fname in sorted(all_files, key=len, reverse=True):
-            if fname.lower() in user_input.lower():
-                return fname
+    try:
+        if os.path.exists(db_path):
+            all_files = [f.replace('.pdf', '') for f in os.listdir(db_path) if f.endswith('.pdf')]
+            for fname in sorted(all_files, key=len, reverse=True):
+                if fname.lower() in user_input.lower():
+                    return fname
+    except Exception as e:
+        print(f"[ERROR] filesystem search: {e}")
 
     if "βασ" in user_input or "bas" in user_input:
         match = re.search(r'\d+', user_input)
@@ -266,8 +269,15 @@ def answer_from_pdf(question: str, context_files: dict):
             return None, False, None
         return answer, True, filename
 
-    # Πολλά αρχεία → max 3, truncated
-    top_files = dict(list(matched_files.items())[:3])
+    # Ταξινόμηση βάσει πόσες φορές εμφανίζεται η λέξη-κλειδί
+    keywords = [w for w in question.lower().split() if len(w) > 3]
+    def relevance_score(item):
+        fn, txt = item
+        return sum(txt.lower().count(kw) for kw in keywords)
+
+    sorted_matches = sorted(matched_files.items(), key=relevance_score, reverse=True)
+    top_files = dict(sorted_matches[:3])
+
     sources = ", ".join(top_files.keys())
     combined_context = "\n\n".join(
         f"=== ΑΡΧΕΙΟ: {fn} ===\n{txt[:4000]}"
@@ -336,6 +346,9 @@ def perform_task(user_request: str, context_files: dict) -> str:
         f"✅ Σωστή: [γράμμα]) [κείμενο σωστής] — [σύντομη εξήγηση]\n"
         f"📚 Πηγή: [γράψε ΑΚΡΙΒΩΣ το όνομα του αρχείου από το ΥΛΙΚΟ, π.χ. baseis7 ή baseis12]\n\n"
         f"RULES:\n"
+        f"- CRITICAL: Each question must be based on an EXACT sentence from the material.\n"
+        f"- After ✅ Σωστή: write the exact quote: Απόδειξη: '[πρόταση από κείμενο]'\n"
+        f"- If you cannot find an exact sentence, DO NOT create that question.\n"
         f"- ALWAYS 4 options Α/Β/Γ/Δ per question.\n"
         f"- NEVER write 'Απάντηση:' — ONLY ✅ Σωστή:\n"
         f"- ALWAYS write 📚 Πηγή: after EACH question.\n"
