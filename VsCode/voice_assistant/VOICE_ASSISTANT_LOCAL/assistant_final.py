@@ -27,6 +27,7 @@ last_target_file       = None   # Αρχείο που ζήτησε ο χρήστ
 last_found_file        = None   # Αρχείο όπου βρέθηκε ΠΡΑΓΜΑΤΙΚΑ η απάντηση ← ΝΕΟ
 awaiting_fallback      = False
 last_fallback_question = ""
+last_topics = []
 
 MAX_HISTORY_PAIRS = 10
 
@@ -101,16 +102,29 @@ def load_all_database_pdfs():
 
 def get_filename_from_input(user_input):
     # Πρώτα: ακριβές match με φορτωμένα αρχεία
-    greek_to_latin = {"βάσεις": "baseis", "βασεις": "baseis", "βάση": "baseis", "βαση": "baseis"}
+    greek_to_latin = {
+    "βάσεις": "baseis", "βασεις": "baseis",
+    "βάσεισ": "baseis", "βασεισ": "baseis",  
+    "βάση": "baseis",   "βαση": "baseis",
+}
     
     for greek, latin in greek_to_latin.items():
         if greek in user_input.lower():
             user_input = user_input.lower().replace(greek, latin)
             break
 
+    # Πρώτα στη μνήμη
     for fname in sorted(loaded_pdfs.keys(), key=len, reverse=True):
         if fname.lower() in user_input.lower():
             return fname
+
+    # Μετά στο filesystem αν δεν βρέθηκε στη μνήμη
+    db_path = get_database_path()
+    if os.path.exists(db_path):
+        all_files = [f.replace('.pdf', '') for f in os.listdir(db_path) if f.endswith('.pdf')]
+        for fname in sorted(all_files, key=len, reverse=True):
+            if fname.lower() in user_input.lower():
+                return fname
 
     if "βασ" in user_input or "bas" in user_input:
         match = re.search(r'\d+', user_input)
@@ -143,7 +157,7 @@ def get_filename_from_input(user_input):
 def call_ollama(messages):
     url     = "http://localhost:11434/api/chat"
     payload = {
-        "model":    "llama3.1:8b",
+        "model": "llama3.1:8b-instruct-q4_K_M"
         "messages": messages,
         "stream":   False,
         "options":  {"temperature": 0.0, "num_ctx": 16384}
@@ -155,39 +169,62 @@ def call_ollama(messages):
         return "Σφάλμα κατά την επικοινωνία με το Ollama."
     except requests.exceptions.RequestException:
         return "Δεν μπόρεσα να συνδεθώ στο Ollama."
+    
 
-
-# ==========================================
-# 3. ΣΥΝΑΡΤΗΣΕΙΣ ΑΠΑΝΤΗΣΗΣ
-# ==========================================
+def call_ollama_stream(messages):
+    url = "http://localhost:11434/api/chat"
+    payload = {
+        "model":   "llama3.1:8b",
+        "messages": messages,
+        "stream":   True,
+        "options":  {"temperature": 0.0, "num_ctx": 16384}
+    }
+    try:
+        import json
+        r = requests.post(url, json=payload, stream=True)
+        result = ""
+        for line in r.iter_lines():
+            if line:
+                data = json.loads(line)
+                token = data.get("message", {}).get("content", "")
+                result += token
+                if data.get("done"):
+                    break
+        return result
+    except requests.exceptions.RequestException:
+        return "Δεν μπόρεσα να συνδεθώ στο Ollama."
+    
+    # ==========================================
+    # 3. ΣΥΝΑΡΤΗΣΕΙΣ ΑΠΑΝΤΗΣΗΣ
+    # ==========================================
 
 def check_topic_in_single_file(question: str, filename: str, text: str) -> bool:
-    system_content = (
-        "You are a text checker. Reply with ONLY the word YES or NO. Nothing else.\n"
-        "YES = the topic exists in the text.\n"
-        "NO = the topic does not exist in the text.\n"
-        "Do not write anything else. Do not explain. Just YES or NO.\n\n"
-        f"TEXT ({filename}):\n\"\"\"\n{text}\n\"\"\""
-    )
-    messages = [
-        {"role": "system", "content": system_content},
-        {"role": "user", "content": f"Does the text contain information about: {question}? Answer YES or NO only."}
-    ]
-    raw = call_ollama(messages).strip().lower()
-    print(f"  [CHECK] {filename} → '{raw[:10]}'")
-    return raw.startswith("yes")
+    keywords = [w for w in question.lower().split() if len(w) > 3]
+    text_lower = text.lower()
+    found = any(kw in text_lower for kw in keywords)
+    print(f"  [CHECK] {filename} → {'yes' if found else 'no'}")
+    return found
+    
 
 
 def answer_from_single_file(question: str, filename: str, text: str) -> str:
+    topics_hint = f"Previous topics discussed: {', '.join(last_topics)}\n" if last_topics else ""
+    text = text[:12000]  # κόβει το PDF για γρηγορότερη απάντηση
     system_content = (
-        f"You are a document analyst. Use ONLY the file: {filename}.\n\n"
+        f"You are a document analyst. Use ONLY the file: {filename}.\n"
+        f"{topics_hint}\n"
         f"ANSWER FORMAT (follow EXACTLY, in Greek):\n"
         f"1. THEORY: 2-4 lines explaining the topic in your own words.\n"
-        f"2. CODE EXAMPLE: ONLY if one exists in the text below — copy it EXACTLY in a ```sql``` block.\n"
+        f"2. CODE EXAMPLE: Copy WORD FOR WORD from the text only if SQL code exists. "
+        f"FORBIDDEN to write any example not present verbatim in the text. "
+        f"If no SQL code exists in the text, skip entirely.\n"
         f"   If no code exists in the text, skip this step entirely.\n"
         f"3. EXPLANATION: One short sentence explaining the example (or the theory if no code).\n"
-        f"4. SOURCE: Last line must be exactly: Πηγή: {filename}\n\n"
+        f"4. ΤΕΛΕΥΤΑΙΑ ΓΡΑΜΜΗ — γράψε ΥΠΟΧΡΕΩΤΙΚΑ και ΠΑΝΤΑ αυτό ακριβώς:\n"
+        f"   Πηγή: {filename}\n"
+        f"   ΜΗΝ παραλείψεις αυτή τη γραμμή. ΜΗΝ γράψεις τίποτα μετά από αυτή.\n\n"
         f"STRICT RULES:\n"
+        f"- The LAST thing you write must ALWAYS be: Πηγή: {filename}\n"
         f"- Do NOT repeat the answer.\n"
         f"- Do NOT invent code or examples.\n"
         f"- Do NOT use external knowledge.\n"
@@ -198,15 +235,14 @@ def answer_from_single_file(question: str, filename: str, text: str) -> str:
     messages = [{"role": "system", "content": system_content}]
     messages.extend(recent)
     messages.append({"role": "user", "content": question})
-    return call_ollama(messages)
+
+    result = call_ollama_stream(messages)
+    if f"Πηγή: {filename}" not in result:
+        result = result.rstrip() + f"\n\nΠηγή: {filename}"
+    return result
 
 
 def answer_from_pdf(question: str, context_files: dict):
-    """
-    Ψάχνει ΟΛΑ τα αρχεία με pre-check ένα-ένα.
-    Επιστρέφει: (reply_text | None, found: bool, matched_filename | None)
-    ← Τώρα επιστρέφει και το όνομα του αρχείου που βρήκε
-    """
     matched_files = {}
 
     for filename, text in context_files.items():
@@ -221,19 +257,26 @@ def answer_from_pdf(question: str, context_files: dict):
     if len(matched_files) == 1:
         filename, text = next(iter(matched_files.items()))
         answer = answer_from_single_file(question, filename, text)
-        return answer, True, filename  # ← επιστρέφει το filename
+        no_info_phrases = [
+            "δεν υπάρχει στο αρχείο", "δεν βρέθηκε",
+            "δεν υπάρχει τέτοιο", "εννοείς", "πιστεύω ότι",
+            "δεν αναφέρεται", "not found"
+        ]
+        if any(p in answer.lower() for p in no_info_phrases):
+            return None, False, None
+        return answer, True, filename
 
-    # Πολλά αρχεία → συνδυασμένη απάντηση
+    # Πολλά αρχεία → max 3, truncated
+    top_files = dict(list(matched_files.items())[:3])
+    sources = ", ".join(top_files.keys())
     combined_context = "\n\n".join(
-        f"=== ΑΡΧΕΙΟ: {fn} ===\n{txt}"
-        for fn, txt in matched_files.items()
+        f"=== ΑΡΧΕΙΟ: {fn} ===\n{txt[:4000]}"
+        for fn, txt in top_files.items()
     )
-    sources = ", ".join(matched_files.keys())
-
     system_content = (
         f"Είσαι αναλυτής εγγράφων. Χρησιμοποιείς ΑΠΟΚΛΕΙΣΤΙΚΑ τα: {sources}.\n\n"
         f"ΚΑΝΟΝΕΣ:\n"
-        f"1. Απάντησε οργανωμένα — ξεχώρισε τι λέει κάθε αρχείο αν διαφέρουν.\n"
+        f"1. Απάντησε οργανωμένα.\n"
         f"2. Παραδείγματα κώδικα ΑΚΡΙΒΩΣ όπως στο κείμενο, σε markdown code block.\n"
         f"3. ΑΠΑΓΟΡΕΥΕΤΑΙ η εφεύρεση στοιχείων που δεν υπάρχουν στο κείμενο.\n"
         f"4. Στο ΤΕΛΟΣ: 'Πηγή: {sources}'\n\n"
@@ -243,15 +286,13 @@ def answer_from_pdf(question: str, context_files: dict):
     recent = [m for m in conversation_history if m["role"] != "system"][-4:]
     messages.extend(recent)
     answer = call_ollama(messages)
-    first_match = next(iter(matched_files.keys()))
-    return answer, True, first_match  # ← επιστρέφει το πρώτο αρχείο που βρέθηκε
+    return answer, True, next(iter(top_files.keys()))
 
 
 def perform_task(user_request: str, context_files: dict) -> str:
     num_match = re.search(r'\d+', user_request)
     num_q = int(num_match.group()) if num_match else 4
 
-    import random
     GENERIC_KEYWORDS = ["πολλαπλής", "πολλαπλης", "quiz", "τεστ", "ερωτήσεις",
                         "ερωτησεις", "κάνε μου", "κανε μου", "φτιάξε", "φτιαξε"]
     
@@ -308,7 +349,7 @@ def perform_task(user_request: str, context_files: dict) -> str:
     recent = [m for m in conversation_history if m["role"] != "system"][-4:]
     messages.extend(recent)
     messages.append({"role": "user", "content": f"Φτιάξε {num_q} ερωτήσεις πολλαπλής επιλογής."})
-    return call_ollama(messages)
+    return call_ollama_stream(messages)
 
 def chat_general(user_text):
     return call_ollama(list(conversation_history))
@@ -339,13 +380,15 @@ def new_chat():
     last_found_file        = None
     awaiting_fallback      = False
     last_fallback_question = ""
+    last_topics.clear()  
     return jsonify({"status": "ok"})
+    
 
 
 @app.route('/chat', methods=['POST'])
 def process_request():
     global loaded_pdfs, last_target_file, last_found_file
-    global awaiting_fallback, last_fallback_question
+    global awaiting_fallback, last_fallback_question, last_topics 
 
     data              = request.json
     is_voice          = data.get('is_voice', False)
@@ -371,12 +414,16 @@ def process_request():
 
     # ── Ορθογραφικός έλεγχος ──
     KNOWN_COMMANDS = [
-        "διάβασε", "διαβασε", "φόρτωσε", "φορτωσε",
-        "βγάλε", "βγαλε", "διέγραψε", "διεγραψε",
-        "άδειασε", "αδειασε", "καθάρισε", "καθαρισε",
-        "σύμφωνα", "συμφωνα", "από", "απο", "πες", "δώσε", "δωσε",
-        "κάνε", "κανε", "φτιάξε", "φτιαξε"
+    "διάβασε", "διαβασε", "φόρτωσε", "φορτωσε",
+    "βγάλε", "βγαλε", "διέγραψε", "διεγραψε", "διαγραψ",
+    "θελω να διαγραψ", "θελω να βγαλ",
+    "άδειασε", "αδειασε", "καθάρισε", "καθαρισε",
+    "σύμφωνα", "συμφωνα", "από", "απο", "πες", "δώσε", "δωσε",
+    "κάνε", "κανε", "φτιάξε", "φτιαξε",
+    "βάλε", "βαλε", "πρόσθεσε", "προσθεσε",       
+    "ξαναβάλε", "ξαναβαλε", "ξαναφόρτω", "ξαναφορτω"
     ]
+    
     looks_like_command = any(
         kw in user_input for kw in ["αρχει", "βασ", "bas", "μνήμη", "μνημη"]
     )
@@ -427,8 +474,9 @@ def process_request():
     # ══════════════════════════════════════════════════════
     # Β: Διαχείριση αρχείων
     # ══════════════════════════════════════════════════════
-    elif any(kw in user_input for kw in ["καθάρισε", "καθαρισε", "άδειασε", "αδειασε"]) and \
-         any(kw in user_input for kw in ["μνήμη", "μνημη", "όλα", "ολα", "αρχεία", "αρχεια"]):
+    elif any(kw in user_input for kw in ["καθάρισε", "καθαρισε", "άδειασε", "αδειασε",
+                                      "διάγραψε", "διαγραψε", "διέγραψε", "διεγραψε"]) and \
+     any(kw in user_input for kw in ["μνήμη", "μνημη", "όλα", "ολα", "αρχεία", "αρχεια"]):
         loaded_pdfs.clear()
         last_target_file = None
         last_found_file  = None
@@ -451,7 +499,8 @@ def process_request():
             reply = "Δεν βρέθηκε αρχείο για διαγραφή. Πες π.χ. 'Διέγραψε το αρχείο baseis4'."
 
     elif any(kw in user_input for kw in ["όλα", "ολα"]) and \
-         any(kw in user_input for kw in ["διάβασ", "διαβασ"]):
+     any(kw in user_input for kw in ["διάβασ", "διαβασ", "φορτωσ", "φόρτωσ",
+                                      "βάλε", "βαλε", "πρόσθεσ", "προσθεσ"]):
         count = load_all_database_pdfs()
         reply = f"Φορτώθηκαν {count} νέα αρχεία. (Σύνολο: {len(loaded_pdfs)})"
 
@@ -546,6 +595,12 @@ def process_request():
             if found:
                 last_found_file = matched
                 reply = answer
+                # Αποθήκευση θέματος για μνήμη
+                topic = user_input[:50]
+                if topic not in last_topics:
+                    last_topics.append(topic)
+                if len(last_topics) > 5:
+                    last_topics.pop(0)
             else:
                 reply = chat_general(user_input)
         else:
