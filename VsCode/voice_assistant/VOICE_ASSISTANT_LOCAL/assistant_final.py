@@ -157,7 +157,7 @@ def get_filename_from_input(user_input):
 def call_ollama(messages):
     url     = "http://localhost:11434/api/chat"
     payload = {
-        "model": "llama3.1:8b-instruct-q4_K_M"
+        "model": "llama3.1:8b-instruct-q4_K_M" ,
         "messages": messages,
         "stream":   False,
         "options":  {"temperature": 0.0, "num_ctx": 16384}
@@ -567,7 +567,11 @@ def process_request():
             fname = get_filename_from_input(user_input)
             if fname and fname in loaded_pdfs:
                 last_target_file = fname
-                answer, found, matched = answer_from_pdf(user_input, {fname: loaded_pdfs[fname]})
+                # Αν η ερώτηση είναι μόνο αναφορά αρχείου χωρίς θέμα, χρησιμοποίησε το τελευταίο θέμα
+                effective_question = user_input
+                if last_fallback_question and len(user_input.split()) < 6:
+                    effective_question = last_fallback_question
+                answer, found, matched = answer_from_pdf(effective_question, {fname: loaded_pdfs[fname]})
                 if found:
                     last_found_file = matched
                     reply = answer
