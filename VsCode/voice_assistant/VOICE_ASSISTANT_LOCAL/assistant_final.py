@@ -24,7 +24,7 @@ system_prompt = {
 conversation_history   = [system_prompt]
 loaded_pdfs            = {}
 last_target_file       = None   # Αρχείο που ζήτησε ο χρήστης
-last_found_file        = None   # Αρχείο όπου βρέθηκε ΠΡΑΓΜΑΤΙΚΑ η απάντηση ← ΝΕΟ
+last_found_file        = None   # Αρχείο όπου βρέθηκε ΠΡΑΓΜΑΤΙΚΑ η απάντηση
 awaiting_fallback      = False
 last_fallback_question = ""
 last_topics = []
@@ -57,7 +57,13 @@ def trim_history():
         rest = rest[-(MAX_HISTORY_PAIRS * 2):]
     conversation_history = system + rest
 
-
+def update_topics(user_input: str):
+    global last_topics
+    topic = user_input[:50]
+    if topic not in last_topics:
+        last_topics.append(topic)
+    if len(last_topics) > 5:
+        last_topics.pop(0)
 
 
 def get_database_path():
@@ -195,16 +201,20 @@ def call_ollama_stream(messages):
         return result
     except requests.exceptions.RequestException:
         return "Δεν μπόρεσα να συνδεθώ στο Ollama."
-    
-    # ==========================================
-    # 3. ΣΥΝΑΡΤΗΣΕΙΣ ΑΠΑΝΤΗΣΗΣ
-    # ==========================================
+
+
+# ==========================================
+# 3. ΣΥΝΑΡΤΗΣΕΙΣ ΑΠΑΝΤΗΣΗΣ
+# ==========================================
 
 def check_topic_in_single_file(question: str, filename: str, text: str) -> bool:
-    keywords = [w for w in question.lower().split() if len(w) > 3]
+    keywords = [w for w in question.lower().split() if len(w) > 4]
+    if not keywords:
+        keywords = [w for w in question.lower().split() if len(w) > 2]
     text_lower = text.lower()
-    found = any(kw in text_lower for kw in keywords)
-    print(f"  [CHECK] {filename} → {'yes' if found else 'no'}")
+    matches = [kw for kw in keywords if kw in text_lower]
+    found = len(matches) >= 1  # ← από 2 σε 1
+    print(f"  [CHECK] {filename} → {'yes' if found else 'no'} (matches: {matches[:3]})")
     return found
     
 
@@ -214,6 +224,11 @@ def answer_from_single_file(question: str, filename: str, text: str) -> str:
     text = text[:12000]  # κόβει το PDF για γρηγορότερη απάντηση
     system_content = (
         f"You are a document analyst. Use ONLY the file: {filename}.\n"
+        f"ANSWER OPTIONS — choose ONE:\n"
+        f"A) If you find DETAILED information: give theory + example + Πηγή: {filename}\n"
+        f"B) If you find only a BRIEF mention: start with 'Σχετική αναφορά στο {filename}:' "
+        f"   then quote ONLY what exists, add 'Δεν υπάρχουν περισσότερες λεπτομέρειες στο αρχείο.'\n"
+        f"C) If you find NOTHING related: write only: NOT_FOUND\n\n"
         f"{topics_hint}\n"
         f"ANSWER FORMAT (follow EXACTLY, in Greek):\n"
         f"1. THEORY: 2-4 lines explaining the topic in your own words.\n"
@@ -240,12 +255,27 @@ def answer_from_single_file(question: str, filename: str, text: str) -> str:
 
     result = call_ollama_stream(messages)
 
+    no_info_phrases = [
+        "δεν υπάρχει στο αρχείο", "δεν βρέθηκε",
+        "δεν υπάρχει τέτοιο", "εννοείς", "πιστεύω ότι",
+        "δεν αναφέρεται", "not found",
+        "δεν περιέχει", "δεν αναφέρει", "δεν υπάρχουν πληροφορίες",
+        "δεν μπορώ να βρω", "ελπίζω", "i cannot find"
+    ]
+
+    if "not_found" in result.strip().lower():
+        return None
+
+    if any(p in result.lower() for p in no_info_phrases):
+        return None
+
     # Αν η απάντηση είναι μόνο κώδικας χωρίς θεωρία, ζήτα συμπλήρωση
     if result.count("```") >= 2 and len(result.split("```")[0].strip()) < 50:
         result = f"**Θεωρία:**\nΗ εντολή χρησιμοποιείται για την τροποποίηση δεδομένων σε πίνακα.\n\n**Παράδειγμα από το αρχείο:**\n" + result
 
-    if f"Πηγή: {filename}" not in result:
-        result = result.rstrip() + f"\n\nΠηγή: {filename}"
+    # Αφαίρεσε τυχόν υπάρχουσες πηγές και βάλε μία καθαρή στο τέλος
+    result = re.sub(r'\n*Πηγή:.*$', '', result, flags=re.MULTILINE).rstrip()
+    result += f"\n\nΠηγή: {filename}"
 
     return result
 
@@ -265,6 +295,8 @@ def answer_from_pdf(question: str, context_files: dict):
     if len(matched_files) == 1:
         filename, text = next(iter(matched_files.items()))
         answer = answer_from_single_file(question, filename, text)
+        if answer is None:
+            return None, False, None
         no_info_phrases = [
             "δεν υπάρχει στο αρχείο", "δεν βρέθηκε",
             "δεν υπάρχει τέτοιο", "εννοείς", "πιστεύω ότι",
@@ -305,6 +337,8 @@ def answer_from_pdf(question: str, context_files: dict):
     recent = [m for m in conversation_history if m["role"] != "system"][-4:]
     messages.extend(recent)
     answer = call_ollama(messages)
+    if f"Πηγή:" not in answer:
+        answer = answer.rstrip() + f"\n\nΠηγή: {sources}"
     return answer, True, next(iter(top_files.keys()))
 
 
@@ -340,7 +374,7 @@ def perform_task(user_request: str, context_files: dict) -> str:
 
     sources = ", ".join(relevant_files.keys())
     combined = "\n\n".join(
-        f"=== ΑΡΧΕΙΟ: {fn} ===\n{txt}"
+        f"=== ΑΡΧΕΙΟ: {fn} ===\n{txt[:3000]}"
         for fn, txt in relevant_files.items()
     )
 
@@ -359,6 +393,8 @@ def perform_task(user_request: str, context_files: dict) -> str:
     f"Πηγή: [όνομα αρχείου]\n"
     f"---\n\n"
     f"RULES:\n"
+    f"- ΑΠΑΓΟΡΕΥΕΤΑΙ να βάλεις μία 'Πηγή:' στο τέλος όλων. "
+    f"Κάθε ερώτηση έχει τη ΔΙΚΗ ΤΗΣ 'Πηγή:' αμέσως μετά την 'Απόδειξη:'.\n"
     f"- EXACTLY {num_q} questions. Not more, not less.\n"
     f"- Each question from a DIFFERENT file.\n"
     f"- Vary the correct answer position.\n"
@@ -369,7 +405,12 @@ def perform_task(user_request: str, context_files: dict) -> str:
     messages = [{"role": "system", "content": system_content}]
     recent = [m for m in conversation_history if m["role"] != "system"][-4:]
     messages.extend(recent)
-    messages.append({"role": "user", "content": f"Φτιάξε {num_q} ερωτήσεις πολλαπλής επιλογής ΑΠΟΚΛΕΙΣΤΙΚΑ από το παραπάνω MATERIAL. Μην χρησιμοποιήσεις καμία εξωτερική γνώση."})
+    messages.append({"role": "user", "content": (
+        f"Φτιάξε ΑΚΡΙΒΩΣ {num_q} ερωτήσεις πολλαπλής επιλογής.\n"
+        f"ΥΠΟΧΡΕΩΤΙΚΑ κάθε ερώτηση από ΔΙΑΦΟΡΕΤΙΚΟ === ΑΡΧΕΙΟ ===.\n"
+        f"Κάθε ερώτηση ΠΡΕΠΕΙ να έχει τη δική της γραμμή 'Πηγή: [όνομα αρχείου]' αμέσως μετά την Απόδειξη.\n"
+        f"Χρησιμοποίησε ΑΠΟΚΛΕΙΣΤΙΚΑ το MATERIAL."
+    )})
     return call_ollama_stream(messages)
 
 def chat_general(user_text):
@@ -417,6 +458,12 @@ def process_request():
 
     if is_voice:
         user_input = listen()
+        if user_input == "__TIMEOUT__":
+            return jsonify({
+                "reply":                "Δεν άκουσα τίποτα. Δοκίμασε ξανά.",
+                "loaded_files":         sorted(loaded_pdfs.keys()),
+                "user_text_from_voice": None
+            })
         if not user_input:
             return jsonify({
                 "reply":                "Δεν μπόρεσα να ακούσω τι είπες. Δοκίμασε ξανά.",
@@ -432,6 +479,9 @@ def process_request():
 
     conversation_history.append({"role": "user", "content": user_input})
     trim_history()
+
+
+    
 
     # ── Ορθογραφικός έλεγχος ──
     KNOWN_COMMANDS = [
@@ -475,7 +525,11 @@ def process_request():
 
     if awaiting_fallback:
         positive = ["ναι", "αμε", "ψάξε", "ψαξε", "οκ", "κάντο", "καντο", "βεβαιως", "βεβαίως"]
-        if any(w in user_input for w in positive):
+        general = ["γενικά", "γενικα", "γνώση", "γνωση", "εξωτερικά", "εξωτερικα"]
+        if any(w in user_input for w in general):
+            awaiting_fallback = False
+            reply = chat_general(last_fallback_question)
+        elif any(w in user_input for w in positive):
             awaiting_fallback = False
             load_all_database_pdfs()
             fallback_files = {k: v for k, v in loaded_pdfs.items() if k != last_target_file}
@@ -627,7 +681,14 @@ def process_request():
                 if len(last_topics) > 5:
                     last_topics.pop(0)
             else:
-                reply = chat_general(user_input)
+                last_fallback_question = user_input
+                awaiting_fallback = True
+                reply = (
+                    "Δεν βρέθηκε πληροφορία σε κανένα φορτωμένο αρχείο. "
+                    "Τι να κάνω;\n"
+                    "• Πείτε 'ναι' → να ψάξω σε όλα τα αρχεία του database\n"
+                    "• Πείτε 'γενικά' → να απαντήσω από γενική γνώση"
+                )
         else:
             reply = chat_general(user_input)
 
@@ -644,20 +705,43 @@ def process_request():
 # 5. ΦΩΝΗΤΙΚΗ ΕΙΣΟΔΟΣ
 # ==========================================
 def listen():
-    recognizer = sr.Recognizer()
-    recognizer.pause_threshold = 2.0
-    with sr.Microphone() as source:
-        print("\n🎤 Ακούω...")
-        recognizer.adjust_for_ambient_noise(source, duration=1)
-        audio = recognizer.listen(source)
-    try:
-        text = recognizer.recognize_google(audio, language='el-GR')
-        print(f"Εσύ: {text}")
-        return text.lower()
-    except sr.UnknownValueError:
+    import threading
+    result_container = [None]
+    error_container  = [None]
+
+    def _listen_thread():
+        recognizer = sr.Recognizer()
+        recognizer.pause_threshold = 1.5
+        recognizer.energy_threshold = 200
+        recognizer.dynamic_energy_threshold = True
+        try:
+            with sr.Microphone(device_index=1) as source:
+                print("\n Ακούω...")
+                recognizer.adjust_for_ambient_noise(source, duration=1.5)
+                audio = recognizer.listen(source, timeout=10, phrase_time_limit=20)
+            text = recognizer.recognize_google(audio, language='el-GR')
+            print(f"Εσύ: {text}")
+            result_container[0] = text.lower()
+        except sr.WaitTimeoutError:
+            error_container[0] = "timeout"
+        except sr.UnknownValueError:
+            error_container[0] = "unknown"
+        except sr.RequestError as e:
+            print(f"[ERROR] Speech API: {e}")
+            error_container[0] = "request_error"
+        except Exception as e:
+            print(f"[ERROR] listen: {e}")
+            error_container[0] = "error"
+
+    t = threading.Thread(target=_listen_thread)
+    t.start()
+    t.join(timeout=20)
+
+    if error_container[0] == "timeout":
+        return "__TIMEOUT__"
+    if error_container[0]:
         return None
-    except sr.RequestError:
-        return None
+    return result_container[0]
 
 
 # ==========================================

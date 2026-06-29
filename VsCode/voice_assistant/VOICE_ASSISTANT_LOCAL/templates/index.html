@@ -350,7 +350,7 @@
 <div class="sidebar" id="sidebar">
     <div class="sidebar-logo">
         <div class="logo-icon">🤖</div>
-        <span class="logo-text">Local AI</span>
+        <span class="logo-text">DocuMind</span>
     </div>
 
     <div class="section-label">Φορτωμένα Αρχεία</div>
@@ -553,7 +553,7 @@
 
     function sendText()       { processRequest(inputEl.value.trim()); }
     function sendCommand(cmd) { processRequest(cmd); }
-    function startVoice()     { processRequest('', true); }
+    function startVoice()     { setTimeout(() => processRequest('', true), 300); }
     function handleEnter(e)   { if (e.key === 'Enter') sendText(); }
 </script>
 </body>
